@@ -1,0 +1,268 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ==========================================================================
+   SYSTÈME DE COULEURS CHROME MATERIAL DESIGN 3 (AMBRE PAR DÉFAUT)
+   Bordures & Dividers adaptatifs Clair / Sombre
+   ========================================================================== */
+
+:root,
+:root[data-theme="light"],
+:root[data-theme="light"][data-accent="amber"] {
+  --md-surface: #fffbf5;
+  --md-surface-container: #f7ede0;
+  --md-surface-high: #efe1ce;
+  --md-on-surface: #1f1b16;
+  --md-on-surface-variant: #574c3f;
+  --md-outline: rgba(31, 27, 22, 0.13);
+  --md-outline-subtle: rgba(31, 27, 22, 0.07);
+
+  /* Par défaut : Ambre Material 3 */
+  --md-primary: #b45309;
+  --md-on-primary: #ffffff;
+  --md-primary-container: #fde68a;
+  --md-on-primary-container: #451a03;
+}
+
+:root[data-theme="dark"],
+:root[data-theme="dark"][data-accent="amber"] {
+  --md-surface: #161412;
+  --md-surface-container: #211e1a;
+  --md-surface-high: #2c2722;
+  --md-on-surface: #ece4dc;
+  --md-on-surface-variant: #b8aba0;
+  --md-outline: rgba(255, 245, 235, 0.11);
+  --md-outline-subtle: rgba(255, 245, 235, 0.06);
+
+  /* Par défaut : Ambre Sombre Material 3 */
+  --md-primary: #fbbf24;
+  --md-on-primary: #3f1d00;
+  --md-primary-container: #78350f;
+  --md-on-primary-container: #fef3c7;
+}
+
+/* Accents Material You — Mode Clair */
+:root[data-theme="light"][data-accent="blue"] {
+  --md-surface: #f8fafd;
+  --md-surface-container: #edf2fa;
+  --md-surface-high: #e2e8f3;
+  --md-on-surface: #1f1f1f;
+  --md-on-surface-variant: #444746;
+  --md-outline: rgba(15, 23, 42, 0.12);
+  --md-outline-subtle: rgba(15, 23, 42, 0.06);
+  --md-primary: #0b57d0;
+  --md-on-primary: #ffffff;
+  --md-primary-container: #d3e3fd;
+  --md-on-primary-container: #041e49;
+}
+
+:root[data-theme="light"][data-accent="indigo"] {
+  --md-surface: #f8f9ff;
+  --md-surface-container: #eef0ff;
+  --md-surface-high: #e1e5ff;
+  --md-on-surface: #1b1b21;
+  --md-on-surface-variant: #46464f;
+  --md-outline: rgba(27, 27, 33, 0.12);
+  --md-outline-subtle: rgba(27, 27, 33, 0.06);
+  --md-primary: #4338ca;
+  --md-on-primary: #ffffff;
+  --md-primary-container: #e0e7ff;
+  --md-on-primary-container: #1e1b4b;
+}
+
+:root[data-theme="light"][data-accent="emerald"] {
+  --md-surface: #f5fbf8;
+  --md-surface-container: #e8f5ee;
+  --md-surface-high: #d8ece2;
+  --md-on-surface: #171d1b;
+  --md-on-surface-variant: #3f4945;
+  --md-outline: rgba(23, 29, 27, 0.12);
+  --md-outline-subtle: rgba(23, 29, 27, 0.06);
+  --md-primary: #0f766e;
+  --md-on-primary: #ffffff;
+  --md-primary-container: #ccfbf1;
+  --md-on-primary-container: #042f2e;
+}
+
+:root[data-theme="light"][data-accent="violet"] {
+  --md-surface: #fbf8ff;
+  --md-surface-container: #f2ecff;
+  --md-surface-high: #e6ddff;
+  --md-on-surface: #1d1b20;
+  --md-on-surface-variant: #49454e;
+  --md-outline: rgba(29, 27, 32, 0.12);
+  --md-outline-subtle: rgba(29, 27, 32, 0.06);
+  --md-primary: #6d28d9;
+  --md-on-primary: #ffffff;
+  --md-primary-container: #ede9fe;
+  --md-on-primary-container: #2e1065;
+}
+
+:root[data-theme="light"][data-accent="rose"] {
+  --md-surface: #fff8f8;
+  --md-surface-container: #fceeee;
+  --md-surface-high: #f7dfdf;
+  --md-on-surface: #201a1b;
+  --md-on-surface-variant: #524345;
+  --md-outline: rgba(32, 26, 27, 0.12);
+  --md-outline-subtle: rgba(32, 26, 27, 0.06);
+  --md-primary: #be123c;
+  --md-on-primary: #ffffff;
+  --md-primary-container: #ffe4e6;
+  --md-on-primary-container: #4c0519;
+}
+
+/* Accents Material You — Mode Sombre */
+:root[data-theme="dark"][data-accent="blue"] {
+  --md-surface: #18191b;
+  --md-surface-container: #222427;
+  --md-surface-high: #2c2f33;
+  --md-on-surface: #e3e3e3;
+  --md-on-surface-variant: #a8adb3;
+  --md-outline: rgba(255, 255, 255, 0.1);
+  --md-outline-subtle: rgba(255, 255, 255, 0.06);
+  --md-primary: #a8c7fa;
+  --md-on-primary: #062e6f;
+  --md-primary-container: #0842a0;
+  --md-on-primary-container: #d3e3fd;
+}
+
+:root[data-theme="dark"][data-accent="indigo"] {
+  --md-surface: #16171d;
+  --md-surface-container: #20222b;
+  --md-surface-high: #2b2d38;
+  --md-on-surface: #e4e1e9;
+  --md-on-surface-variant: #acaab8;
+  --md-outline: rgba(255, 255, 255, 0.1);
+  --md-outline-subtle: rgba(255, 255, 255, 0.06);
+  --md-primary: #a5b4fc;
+  --md-on-primary: #1e1b4b;
+  --md-primary-container: #3730a3;
+  --md-on-primary-container: #e0e7ff;
+}
+
+:root[data-theme="dark"][data-accent="emerald"] {
+  --md-surface: #141918;
+  --md-surface-container: #1d2422;
+  --md-surface-high: #27302d;
+  --md-on-surface: #e0e6e3;
+  --md-on-surface-variant: #a3b0ab;
+  --md-outline: rgba(255, 255, 255, 0.1);
+  --md-outline-subtle: rgba(255, 255, 255, 0.06);
+  --md-primary: #5eead4;
+  --md-on-primary: #042f2e;
+  --md-primary-container: #115e59;
+  --md-on-primary-container: #ccfbf1;
+}
+
+:root[data-theme="dark"][data-accent="violet"] {
+  --md-surface: #18161d;
+  --md-surface-container: #221f29;
+  --md-surface-high: #2d2936;
+  --md-on-surface: #e6e1e9;
+  --md-on-surface-variant: #b2abb8;
+  --md-outline: rgba(255, 255, 255, 0.1);
+  --md-outline-subtle: rgba(255, 255, 255, 0.06);
+  --md-primary: #c4b5fd;
+  --md-on-primary: #2e1065;
+  --md-primary-container: #5b21b6;
+  --md-on-primary-container: #ede9fe;
+}
+
+:root[data-theme="dark"][data-accent="rose"] {
+  --md-surface: #1b1517;
+  --md-surface-container: #261e20;
+  --md-surface-high: #32272a;
+  --md-on-surface: #ece0e1;
+  --md-on-surface-variant: #bba8aa;
+  --md-outline: rgba(255, 255, 255, 0.1);
+  --md-outline-subtle: rgba(255, 255, 255, 0.06);
+  --md-primary: #fda4af;
+  --md-on-primary: #4c0519;
+  --md-primary-container: #9f1239;
+  --md-on-primary-container: #ffe4e6;
+}
+
+@layer base {
+  *,
+  ::before,
+  ::after {
+    border-color: var(--md-outline);
+  }
+}
+
+body {
+  font-family: 'Google Sans', 'Google Sans Text', 'Product Sans', 'Plus Jakarta Sans', Roboto, system-ui, -apple-system, sans-serif;
+  background-color: var(--md-surface);
+  color: var(--md-on-surface);
+}
+
+/* Styles de l'éditeur riche (Notepad plein écran) */
+.krono-rich-editor:empty:before {
+  content: attr(data-placeholder);
+  color: var(--md-on-surface-variant);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.krono-rich-editor h1 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin-top: 0.5rem;
+  margin-bottom: 0.35rem;
+  line-height: 1.3;
+}
+
+.krono-rich-editor h2 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin-top: 0.45rem;
+  margin-bottom: 0.25rem;
+  line-height: 1.35;
+}
+
+.krono-rich-editor ul {
+  list-style-type: disc;
+  padding-left: 1.35rem;
+  margin: 0.35rem 0;
+}
+
+.krono-rich-editor ol {
+  list-style-type: decimal;
+  padding-left: 1.35rem;
+  margin: 0.35rem 0;
+}
+
+.krono-rich-editor blockquote {
+  border-left: 3px solid var(--md-primary);
+  padding-left: 0.75rem;
+  margin: 0.4rem 0;
+  color: var(--md-on-surface-variant);
+  font-style: italic;
+}
+
+.krono-rich-editor hr {
+  border: 0;
+  border-top: 1px solid var(--md-outline);
+  margin: 0.65rem 0;
+}
+
+.krono-rich-editor p {
+  margin-bottom: 0.35rem;
+}
+
+/* Scrollbars Material Flat fines */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--md-outline);
+  border-radius: 9999px;
+}
