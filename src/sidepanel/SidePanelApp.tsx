@@ -1,33 +1,27 @@
 import React, {
   useState,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
+  useCallback,
 } from 'react';
 import {
   IconArrowRight,
   IconBell,
-  IconBold,
   IconCheck,
   IconCheckCircle,
+  IconChevronDown,
+  IconChevronRight,
   IconCircle,
-  IconClearFormat,
   IconClock,
   IconClose,
   IconCopy,
   IconEdit,
   IconExternalLink,
   IconFolder,
-  IconGripVertical,
   IconHalfCircle,
-  IconHighlighter,
   IconIndent,
   IconInfo,
-  IconItalic,
-  IconListBullet,
-  IconListOrdered,
-  IconMinus,
   IconMoreVertical,
   IconNote,
   IconOutdent,
@@ -40,26 +34,27 @@ import {
   IconPriorityHigh,
   IconPriorityLow,
   IconPriorityMedium,
-  IconQuote,
   IconRepeat,
   IconRotateCcw,
   IconSearch,
-  IconStrikethrough,
-  IconTextColor,
   IconTimer,
   IconTrash,
-  IconUnderline,
   IconVolume,
 } from '../shared/Icons';
+import { Modal } from '../shared/Modal';
+import { TruncatedTitle } from '../shared/TruncatedTitle';
+import { getTaskStatus, normalizeTodoLists } from '../shared/todoUtils';
 import {
   DEFAULT_KANBANS,
   DEFAULT_NOTES,
   DEFAULT_TIMERS,
+  DEFAULT_TIMER_SOUND_ID,
   DEFAULT_TODO_LISTS,
   KanbanBoard,
   NoteItem,
   Priority,
   TIMER_SOUNDS,
+  TODOS_KANBAN_BOARD_ID,
   TimerItem,
   TimerSoundId,
   TodoList,
@@ -67,8 +62,10 @@ import {
   TodoTask,
 } from '../shared/types';
 import { useChromeStorage } from '../shared/useChromeStorage';
+import { useClickOutside } from '../shared/useClickOutside';
 import { CHROME_ACCENTS, useTheme } from '../shared/useTheme';
 import {
+  detectIsChromeSidePanel,
   formatSeconds,
   openFloatingTimerWindow,
   openKanbanWindow,
@@ -76,14 +73,61 @@ import {
   playTimerSound,
   stopAlarmSound,
   stripHtml,
+  usePersistWindowBounds,
 } from '../shared/windowUtils';
+import {
+  RichNoteEditor,
+  insertChecklistAtSelection,
+  insertInlineTimerDraftAtSelection,
+} from './RichNoteEditor';
+import { NotesFormatToolbar } from './NotesFormatToolbar';
 
 type SidePanelTab = 'timers' | 'todos' | 'notes';
-type TodoFilter = 'active' | 'not_started' | 'in_progress' | 'completed';
+const SIDE_PANEL_TABS: SidePanelTab[] = ['timers', 'todos', 'notes'];
+type TodoFilter = 'active' | 'in_progress' | 'completed';
 type AboutModalTab = 'about' | 'tutorial';
 
+interface TaskContextMenuState {
+  taskId: string;
+  parentTaskId: string | null;
+  x: number;
+  y: number;
+}
+
+interface TaskDragPayload {
+  taskId: string;
+  parentTaskId: string | null;
+}
+
+interface InlineEditDescState {
+  taskId: string;
+  parentTaskId: string | null;
+  value: string;
+}
+
+interface QuickAddTaskState {
+  afterTaskId: string;
+  title: string;
+  description: string;
+}
+
 const PRESET_DURATIONS = [10, 20, 30, 45, 60];
-const TASK_DURATION_PRESETS = [10, 15, 25, 30, 45, 60];
+const TASK_DURATION_DROPDOWN_OPTIONS: { value: string; label: string }[] = [
+  { value: '', label: 'Sans heure' },
+  { value: '5', label: '5 minutes' },
+  { value: '10', label: '10 minutes' },
+  { value: '15', label: '15 minutes' },
+  { value: '20', label: '20 minutes' },
+  { value: '25', label: '25 minutes' },
+  { value: '30', label: '30 minutes' },
+  { value: '45', label: '45 minutes' },
+  { value: '60', label: '1 heure (60 min)' },
+  { value: '90', label: '1 h 30 (90 min)' },
+  { value: '120', label: '2 heures (120 min)' },
+];
+const KNOWN_DURATION_VALUES = new Set(
+  TASK_DURATION_DROPDOWN_OPTIONS.map((o) => o.value)
+);
 
 const TEXT_COLORS = [
   { label: 'Par défaut', color: 'inherit', swatch: '#94a3b8' },
@@ -170,59 +214,6 @@ const PRIORITY_STYLES: Record<
   },
 };
 
-const getTaskStatus = (task: TodoTask): TodoStatus => {
-  if (task.status) return task.status;
-  return task.completed ? 'completed' : 'not_started';
-};
-
-interface RichNoteEditorProps {
-  noteId: string;
-  initialHtml: string;
-  editorRef: React.MutableRefObject<HTMLDivElement | null>;
-  onChangeHtml: (html: string) => void;
-}
-
-const RichNoteEditor: React.FC<RichNoteEditorProps> = ({
-  noteId,
-  initialHtml,
-  editorRef,
-  onChangeHtml,
-}) => {
-  const internalRef = useRef<HTMLDivElement | null>(null);
-
-  useLayoutEffect(() => {
-    if (internalRef.current) {
-      internalRef.current.innerHTML = initialHtml || '';
-    }
-  }, [noteId]);
-
-  useEffect(() => {
-    if (
-      internalRef.current &&
-      document.activeElement !== internalRef.current &&
-      internalRef.current.innerHTML !== (initialHtml || '')
-    ) {
-      internalRef.current.innerHTML = initialHtml || '';
-    }
-  }, [initialHtml]);
-
-  return (
-    <div
-      ref={(el) => {
-        internalRef.current = el;
-        editorRef.current = el;
-      }}
-      contentEditable
-      suppressContentEditableWarning
-      data-placeholder="Commencez à écrire votre note ici..."
-      onInput={(e) =>
-        onChangeHtml((e.currentTarget as HTMLDivElement).innerHTML)
-      }
-      className="krono-rich-editor flex-1 w-full bg-transparent border-none focus:outline-none px-4 py-2 text-xs leading-relaxed text-md-on-surface overflow-y-auto pb-28"
-    />
-  );
-};
-
 export const SidePanelApp: React.FC = () => {
   const [activeTab, setActiveTab] = useChromeStorage<SidePanelTab>(
     'activeSidePanelTab',
@@ -231,8 +222,45 @@ export const SidePanelApp: React.FC = () => {
 
   const [showThemePicker, setShowThemePicker] = useState<boolean>(false);
   const [showOptionsMenu, setShowOptionsMenu] = useState<boolean>(false);
+  const [isTabBarPinned, setIsTabBarPinned] = useChromeStorage<boolean>(
+    'isTabBarPinned',
+    true
+  );
+  const [showSectionNavMenu, setShowSectionNavMenu] = useState<boolean>(false);
   const [isAboutModalOpen, setIsAboutModalOpen] = useState<boolean>(false);
   const [aboutModalTab, setAboutModalTab] = useState<AboutModalTab>('tutorial');
+
+  // Détection exacte du contexte Chrome Side Panel vs fenêtre indépendante / onglet
+  const [isInSidePanel, setIsInSidePanel] = useState<boolean>(false);
+  const [sidePanelResolved, setSidePanelResolved] = useState<boolean>(false);
+
+  useEffect(() => {
+    let active = true;
+    detectIsChromeSidePanel().then((inPanel) => {
+      if (!active) return;
+      setIsInSidePanel(inPanel);
+      setSidePanelResolved(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Persistance des dimensions de la fenêtre indépendante dès qu'elle est redimensionnée
+  usePersistWindowBounds('standalone', sidePanelResolved && !isInSidePanel);
+
+  // Refs pour fermeture automatique de tous les menus au clic à l'extérieur
+  const optionsButtonRef = useRef<HTMLButtonElement | null>(null);
+  const optionsMenuRef = useRef<HTMLDivElement | null>(null);
+  const sectionNavButtonRef = useRef<HTMLButtonElement | null>(null);
+  const sectionNavMenuRef = useRef<HTMLDivElement | null>(null);
+  const themeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const themePickerRef = useRef<HTMLDivElement | null>(null);
+  const textColorButtonRef = useRef<HTMLButtonElement | null>(null);
+  const textColorMenuRef = useRef<HTMLDivElement | null>(null);
+  const highlightButtonRef = useRef<HTMLButtonElement | null>(null);
+  const highlightMenuRef = useRef<HTMLDivElement | null>(null);
+  const taskContextMenuRef = useRef<HTMLDivElement | null>(null);
 
   const { themeSettings, setMode, setAccent } = useTheme();
 
@@ -258,57 +286,22 @@ export const SidePanelApp: React.FC = () => {
   );
   const [activeKanbanId] = useChromeStorage<string>(
     'activeKanbanId',
-    DEFAULT_KANBANS[0].id
+    TODOS_KANBAN_BOARD_ID
   );
   const [activeNoteId, setActiveNoteId] = useChromeStorage<string>(
     'activeNoteId',
     DEFAULT_NOTES[0].id
   );
+  const [noteFontSize, setNoteFontSize] = useChromeStorage<number>(
+    'noteFontSize',
+    13
+  );
 
-  // Redimensionnement automatique si lancé via le raccourci Bureau (--app)
+  // Migration transparente des anciennes sous-tâches à plat en vraies sous-tâches imbriquées (`children`)
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('standalone') === '1' && window.outerWidth > 600) {
-      try {
-        window.resizeTo(435, 820);
-      } catch {
-        // ignore
-      }
-    }
-  }, []);
-
-  // Migration transparente d'éventuelles sous-tâches imbriquées en vraies tâches indentées
-  useEffect(() => {
-    let needsMigration = false;
-    const migrated = todoLists.map((list) => {
-      const flatTasks: TodoTask[] = [];
-      list.tasks.forEach((t) => {
-        flatTasks.push({
-          ...t,
-          indentLevel: t.indentLevel ?? 0,
-          subtasks: undefined,
-        });
-        if (t.subtasks && t.subtasks.length > 0) {
-          needsMigration = true;
-          t.subtasks.forEach((sub, idx) => {
-            flatTasks.push({
-              id: sub.id || `${t.id}_sub_${idx}`,
-              text: sub.title,
-              description: '',
-              indentLevel: 1,
-              status: sub.completed ? 'completed' : 'not_started',
-              completed: sub.completed,
-              priority: t.priority || 'medium',
-              createdAt: t.createdAt + idx + 1,
-            });
-          });
-        }
-      });
-      return { ...list, tasks: flatTasks };
-    });
-
-    if (needsMigration) {
-      setTodoLists(migrated);
+    const { lists: normalized, changed } = normalizeTodoLists(todoLists);
+    if (changed) {
+      setTodoLists(normalized);
     }
   }, [todoLists, setTodoLists]);
 
@@ -325,7 +318,7 @@ export const SidePanelApp: React.FC = () => {
   }, []);
 
   // ==========================================================================
-  // États des Modales
+  // États des Modales & Menus
   // ==========================================================================
   // Modale Création de Minuteur au format hh:mm:ss
   const [isTimerModalOpen, setIsTimerModalOpen] = useState<boolean>(false);
@@ -333,22 +326,53 @@ export const SidePanelApp: React.FC = () => {
   const [timerHours, setTimerHours] = useState<string>('00');
   const [timerMinutes, setTimerMinutes] = useState<string>('30');
   const [timerSeconds, setTimerSeconds] = useState<string>('00');
-  const [newTimerSound, setNewTimerSound] = useState<TimerSoundId>('chime');
+  const [newTimerSound, setNewTimerSound] = useState<TimerSoundId>(
+    DEFAULT_TIMER_SOUND_ID
+  );
   const [newTimerRepeat, setNewTimerRepeat] = useState<boolean>(true);
 
-  // Modale Création / Modification de Tâche Todo
+  // Modale Création / Modification de Tâche Todo (défaut : « Sans heure »)
   const [isTaskModalOpen, setIsTaskModalOpen] = useState<boolean>(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
-  const [insertAfterTaskId, setInsertAfterTaskId] = useState<string | null>(null);
+  const [editingParentTaskId, setEditingParentTaskId] = useState<string | null>(
+    null
+  );
+  const [creatingForParentId, setCreatingForParentId] = useState<string | null>(
+    null
+  );
   const [taskTitle, setTaskTitle] = useState<string>('');
   const [taskDescription, setTaskDescription] = useState<string>('');
-  const [taskDurationMinutes, setTaskDurationMinutes] = useState<string>('25');
-  const [taskIndentLevel, setTaskIndentLevel] = useState<number>(0);
+  const [taskDurationMinutes, setTaskDurationMinutes] = useState<string>('');
+  const [taskDurationIsCustom, setTaskDurationIsCustom] =
+    useState<boolean>(false);
   const [taskStatus, setTaskStatus] = useState<TodoStatus>('not_started');
   const [taskPriority, setTaskPriority] = useState<Priority>('medium');
 
-  // Drag & Drop des tâches Todo
-  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+  // Pliage/dépliage des descriptions + édition à la volée + ajout rapide [+]
+  const [expandedDescIds, setExpandedDescIds] = useState<
+    Record<string, boolean>
+  >({});
+  const [inlineEditDesc, setInlineEditDesc] =
+    useState<InlineEditDescState | null>(null);
+  const [quickAddTask, setQuickAddTask] = useState<QuickAddTaskState | null>(
+    null
+  );
+  const descClickTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (descClickTimerRef.current !== null) {
+        window.clearTimeout(descClickTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Menu contextuel d'une tâche Todo
+  const [taskContextMenu, setTaskContextMenu] =
+    useState<TaskContextMenuState | null>(null);
+
+  // Drag & Drop des tâches & sous-tâches Todo
+  const [draggedTask, setDraggedTask] = useState<TaskDragPayload | null>(null);
   const [dragOverTaskId, setDragOverTaskId] = useState<string | null>(null);
   const [dragStartX, setDragStartX] = useState<number>(0);
 
@@ -365,24 +389,89 @@ export const SidePanelApp: React.FC = () => {
 
   const editorRef = useRef<HTMLDivElement | null>(null);
 
-  // Fermeture globale des modales et menus avec la touche Échap (Esc)
+  // Fermeture automatique des menus au clic à l'extérieur
+  const closeOptionsMenu = useCallback(() => setShowOptionsMenu(false), []);
+  const closeSectionNavMenu = useCallback(
+    () => setShowSectionNavMenu(false),
+    []
+  );
+  const closeThemePicker = useCallback(() => setShowThemePicker(false), []);
+  const closeTextColorMenu = useCallback(() => setShowTextColorMenu(false), []);
+  const closeHighlightMenu = useCallback(() => setShowHighlightMenu(false), []);
+  const closeTaskContextMenu = useCallback(() => setTaskContextMenu(null), []);
+
+  useClickOutside(
+    useMemo(() => [optionsButtonRef, optionsMenuRef], []),
+    showOptionsMenu,
+    closeOptionsMenu
+  );
+  useClickOutside(
+    useMemo(() => [sectionNavButtonRef, sectionNavMenuRef], []),
+    showSectionNavMenu,
+    closeSectionNavMenu
+  );
+  useClickOutside(
+    useMemo(() => [themeButtonRef, themePickerRef], []),
+    showThemePicker,
+    closeThemePicker
+  );
+  useClickOutside(
+    useMemo(() => [textColorButtonRef, textColorMenuRef], []),
+    showTextColorMenu,
+    closeTextColorMenu
+  );
+  useClickOutside(
+    useMemo(() => [highlightButtonRef, highlightMenuRef], []),
+    showHighlightMenu,
+    closeHighlightMenu
+  );
+  useClickOutside(
+    taskContextMenuRef,
+    taskContextMenu !== null,
+    closeTaskContextMenu
+  );
+
+  // Raccourcis clavier globaux : Ctrl + Tab (changement d'onglet) & Échap (fermeture des menus)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setIsTimerModalOpen(false);
-        setIsTaskModalOpen(false);
-        setIsTodoListModalOpen(false);
-        setIsNotesModalOpen(false);
-        setIsAboutModalOpen(false);
+      // Ctrl + Tab (et Ctrl + Shift + Tab) pour naviguer entre Timers, Todos, Notes
+      if (e.ctrlKey && e.key === 'Tab' && !e.altKey && !e.metaKey) {
+        if (document.querySelector('dialog[open]')) return;
+        e.preventDefault();
+        e.stopPropagation();
         setShowOptionsMenu(false);
+        setShowSectionNavMenu(false);
         setShowThemePicker(false);
         setShowTextColorMenu(false);
         setShowHighlightMenu(false);
+        setTaskContextMenu(null);
+        setActiveTab((prev) => {
+          const currentIndex = SIDE_PANEL_TABS.indexOf(prev);
+          const safeIndex = currentIndex === -1 ? 0 : currentIndex;
+          const delta = e.shiftKey ? -1 : 1;
+          const nextIndex =
+            (safeIndex + delta + SIDE_PANEL_TABS.length) %
+            SIDE_PANEL_TABS.length;
+          return SIDE_PANEL_TABS[nextIndex];
+        });
+        return;
+      }
+
+      if (e.key === 'Escape') {
+        if (document.querySelector('dialog[open]')) return;
+        setShowOptionsMenu(false);
+        setShowSectionNavMenu(false);
+        setShowThemePicker(false);
+        setShowTextColorMenu(false);
+        setShowHighlightMenu(false);
+        setTaskContextMenu(null);
+        setQuickAddTask(null);
+        setInlineEditDesc(null);
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [setActiveTab]);
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const showToast = (msg: string) => {
@@ -450,6 +539,13 @@ export const SidePanelApp: React.FC = () => {
   const pendingTodosCount = useMemo(
     () =>
       currentTodoList.tasks.filter((t) => getTaskStatus(t) !== 'completed')
+        .length,
+    [currentTodoList]
+  );
+
+  const inProgressTodosCount = useMemo(
+    () =>
+      currentTodoList.tasks.filter((t) => getTaskStatus(t) === 'in_progress')
         .length,
     [currentTodoList]
   );
@@ -663,30 +759,35 @@ export const SidePanelApp: React.FC = () => {
     }
   };
 
-  const openCreateTaskModal = (options?: {
-    afterTaskId?: string;
-    indentLevel?: number;
-  }) => {
+  const customKanbanBoards = useMemo(
+    () => kanbans.filter((b) => b.id !== TODOS_KANBAN_BOARD_ID),
+    [kanbans]
+  );
+
+  const openCreateTaskModal = (options?: { parentTaskId?: string }) => {
     setEditingTaskId(null);
-    setInsertAfterTaskId(options?.afterTaskId || null);
+    setEditingParentTaskId(null);
+    setCreatingForParentId(options?.parentTaskId || null);
     setTaskTitle('');
     setTaskDescription('');
-    setTaskDurationMinutes('25');
-    setTaskIndentLevel(options?.indentLevel ?? 0);
+    setTaskDurationMinutes(''); // Par défaut : « Sans heure »
+    setTaskDurationIsCustom(false);
     setTaskStatus('not_started');
     setTaskPriority('medium');
     setIsTaskModalOpen(true);
   };
 
-  const openEditTaskModal = (task: TodoTask) => {
+  const openEditTaskModal = (task: TodoTask, parentTaskId: string | null = null) => {
+    const durStr = task.durationMinutes ? String(task.durationMinutes) : '';
     setEditingTaskId(task.id);
-    setInsertAfterTaskId(null);
+    setEditingParentTaskId(parentTaskId);
+    setCreatingForParentId(null);
     setTaskTitle(task.text);
     setTaskDescription(task.description || '');
-    setTaskDurationMinutes(
-      task.durationMinutes ? String(task.durationMinutes) : ''
+    setTaskDurationMinutes(durStr);
+    setTaskDurationIsCustom(
+      Boolean(durStr) && !KNOWN_DURATION_VALUES.has(durStr)
     );
-    setTaskIndentLevel(task.indentLevel ?? 0);
     setTaskStatus(getTaskStatus(task));
     setTaskPriority(task.priority);
     setIsTaskModalOpen(true);
@@ -695,7 +796,9 @@ export const SidePanelApp: React.FC = () => {
   const handleSaveTaskFromModal = (e: React.FormEvent) => {
     e.preventDefault();
     const text = taskTitle.trim();
-    if (!text) return;
+    const description = taskDescription.trim();
+    // Le titre n'est pas obligatoire si la description est renseignée
+    if (!text && !description) return;
 
     const parsedDur = parseInt(taskDurationMinutes, 10);
     const durationMinutes =
@@ -703,36 +806,58 @@ export const SidePanelApp: React.FC = () => {
 
     if (editingTaskId) {
       setTodoLists((prev) =>
-        prev.map((list) =>
-          list.id === currentTodoList.id
-            ? {
-                ...list,
-                tasks: list.tasks.map((t) =>
-                  t.id === editingTaskId
-                    ? {
-                        ...t,
-                        text,
-                        description: taskDescription.trim(),
-                        durationMinutes,
-                        indentLevel: taskIndentLevel,
-                        status: taskStatus,
-                        completed: taskStatus === 'completed',
-                        priority: taskPriority,
-                      }
-                    : t
-                ),
-              }
-            : list
-        )
+        prev.map((list) => {
+          if (list.id !== currentTodoList.id) return list;
+          if (editingParentTaskId) {
+            return {
+              ...list,
+              tasks: list.tasks.map((parent) =>
+                parent.id === editingParentTaskId
+                  ? {
+                      ...parent,
+                      children: (parent.children || []).map((sub) =>
+                        sub.id === editingTaskId
+                          ? {
+                              ...sub,
+                              text,
+                              description,
+                              durationMinutes,
+                              status: taskStatus,
+                              completed: taskStatus === 'completed',
+                              priority: taskPriority,
+                            }
+                          : sub
+                      ),
+                    }
+                  : parent
+              ),
+            };
+          }
+          return {
+            ...list,
+            tasks: list.tasks.map((t) =>
+              t.id === editingTaskId
+                ? {
+                    ...t,
+                    text,
+                    description,
+                    durationMinutes,
+                    status: taskStatus,
+                    completed: taskStatus === 'completed',
+                    priority: taskPriority,
+                  }
+                : t
+            ),
+          };
+        })
       );
       showToast('Tâche mise à jour.');
     } else {
       const newTask: TodoTask = {
         id: `task_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         text,
-        description: taskDescription.trim(),
+        description,
         durationMinutes,
-        indentLevel: taskIndentLevel,
         status: taskStatus,
         completed: taskStatus === 'completed',
         priority: taskPriority,
@@ -742,110 +867,343 @@ export const SidePanelApp: React.FC = () => {
       setTodoLists((prev) =>
         prev.map((list) => {
           if (list.id !== currentTodoList.id) return list;
-          if (insertAfterTaskId) {
-            const idx = list.tasks.findIndex((t) => t.id === insertAfterTaskId);
-            if (idx !== -1) {
-              const nextTasks = [...list.tasks];
-              nextTasks.splice(idx + 1, 0, newTask);
-              return { ...list, tasks: nextTasks };
-            }
+          if (creatingForParentId) {
+            return {
+              ...list,
+              tasks: list.tasks.map((parent) =>
+                parent.id === creatingForParentId
+                  ? {
+                      ...parent,
+                      collapsed: false,
+                      children: [...(parent.children || []), newTask],
+                    }
+                  : parent
+              ),
+            };
           }
           return { ...list, tasks: [newTask, ...list.tasks] };
         })
       );
       showToast(
-        taskIndentLevel > 0 ? 'Sous-tâche ajoutée.' : 'Tâche ajoutée.'
+        creatingForParentId ? 'Sous-tâche ajoutée.' : 'Tâche ajoutée.'
       );
     }
 
     setIsTaskModalOpen(false);
     setEditingTaskId(null);
-    setInsertAfterTaskId(null);
+    setEditingParentTaskId(null);
+    setCreatingForParentId(null);
   };
 
-  const handleCycleTaskStatus = (taskId: string) => {
-    const order: TodoStatus[] = ['not_started', 'in_progress', 'completed'];
-    let becameCompleted = false;
+  // Pliage / dépliage d'une description au clic simple (annulé si double-clic)
+  const handleDescriptionClick = (taskId: string) => {
+    if (window.getSelection()?.toString()) return;
+    if (descClickTimerRef.current !== null) {
+      window.clearTimeout(descClickTimerRef.current);
+    }
+    descClickTimerRef.current = window.setTimeout(() => {
+      descClickTimerRef.current = null;
+      setExpandedDescIds((prev) => ({ ...prev, [taskId]: !prev[taskId] }));
+    }, 190);
+  };
+
+  // Édition à la volée sans bordure au double-clic sur la description
+  const handleStartInlineEditDescription = (
+    task: TodoTask,
+    parentTaskId: string | null
+  ) => {
+    if (descClickTimerRef.current !== null) {
+      window.clearTimeout(descClickTimerRef.current);
+      descClickTimerRef.current = null;
+    }
+    setExpandedDescIds((prev) => ({ ...prev, [task.id]: true }));
+    setInlineEditDesc({
+      taskId: task.id,
+      parentTaskId,
+      value: task.description || '',
+    });
+  };
+
+  const handleCommitInlineEditDescription = () => {
+    if (!inlineEditDesc) return;
+    const { taskId, parentTaskId, value } = inlineEditDesc;
+    const trimmed = value.trim();
 
     setTodoLists((prev) =>
-      prev.map((list) =>
-        list.id === currentTodoList.id
-          ? {
-              ...list,
-              tasks: list.tasks.map((t) => {
-                if (t.id !== taskId) return t;
-                const currentStatus = getTaskStatus(t);
-                const nextStatus =
-                  order[(order.indexOf(currentStatus) + 1) % order.length];
-                if (nextStatus === 'completed') becameCompleted = true;
-                return {
+      prev.map((list) => {
+        if (list.id !== currentTodoList.id) return list;
+        if (parentTaskId) {
+          return {
+            ...list,
+            tasks: list.tasks.map((parent) =>
+              parent.id === parentTaskId
+                ? {
+                    ...parent,
+                    children: (parent.children || []).map((sub) =>
+                      sub.id === taskId
+                        ? {
+                            ...sub,
+                            // Si le titre est vide, on empêche de vider complètement la description
+                            description:
+                              !sub.text.trim() && !trimmed
+                                ? sub.description
+                                : trimmed,
+                          }
+                        : sub
+                    ),
+                  }
+                : parent
+            ),
+          };
+        }
+        return {
+          ...list,
+          tasks: list.tasks.map((t) =>
+            t.id === taskId
+              ? {
+                  ...t,
+                  description:
+                    !t.text.trim() && !trimmed ? t.description : trimmed,
+                }
+              : t
+          ),
+        };
+      })
+    );
+    setInlineEditDesc(null);
+  };
+
+  // Ajout rapide à la volée via le bouton [+] sous une tâche (titre + description uniquement)
+  const handleOpenQuickAddAfterTask = (afterTaskId: string) => {
+    setTaskContextMenu(null);
+    setQuickAddTask({
+      afterTaskId,
+      title: '',
+      description: '',
+    });
+  };
+
+  const handleSaveQuickAddTask = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!quickAddTask) return;
+
+    const text = quickAddTask.title.trim();
+    const description = quickAddTask.description.trim();
+    if (!text && !description) {
+      setQuickAddTask(null);
+      return;
+    }
+
+    const defaultStatus: TodoStatus =
+      todoFilter === 'in_progress' ? 'in_progress' : 'not_started';
+
+    const newTask: TodoTask = {
+      id: `task_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      text,
+      description,
+      status: defaultStatus,
+      completed: false,
+      priority: 'medium',
+      createdAt: Date.now(),
+    };
+
+    setTodoLists((prev) =>
+      prev.map((list) => {
+        if (list.id !== currentTodoList.id) return list;
+        const idx = list.tasks.findIndex(
+          (t) => t.id === quickAddTask.afterTaskId
+        );
+        const nextTasks = [...list.tasks];
+        if (idx !== -1) {
+          nextTasks.splice(idx + 1, 0, newTask);
+        } else {
+          nextTasks.push(newTask);
+        }
+        return { ...list, tasks: nextTasks };
+      })
+    );
+
+    setQuickAddTask(null);
+    showToast('Tâche ajoutée.');
+  };
+
+  const handleSetTaskStatus = (
+    taskId: string,
+    nextStatus: TodoStatus,
+    parentTaskId: string | null = null
+  ) => {
+    setTodoLists((prev) =>
+      prev.map((list) => {
+        if (list.id !== currentTodoList.id) return list;
+        if (parentTaskId) {
+          return {
+            ...list,
+            tasks: list.tasks.map((parent) =>
+              parent.id === parentTaskId
+                ? {
+                    ...parent,
+                    children: (parent.children || []).map((sub) =>
+                      sub.id === taskId
+                        ? {
+                            ...sub,
+                            status: nextStatus,
+                            completed: nextStatus === 'completed',
+                          }
+                        : sub
+                    ),
+                  }
+                : parent
+            ),
+          };
+        }
+        return {
+          ...list,
+          tasks: list.tasks.map((t) =>
+            t.id === taskId
+              ? {
                   ...t,
                   status: nextStatus,
                   completed: nextStatus === 'completed',
-                };
-              }),
-            }
-          : list
-      )
+                }
+              : t
+          ),
+        };
+      })
     );
 
-    if (becameCompleted && todoFilter !== 'completed') {
+    if (!parentTaskId && nextStatus === 'completed' && todoFilter !== 'completed') {
       showToast('Tâche terminée (déplacée dans « Terminées »).');
     }
   };
 
-  const handleCycleTaskPriority = (taskId: string) => {
-    const order: Priority[] = ['low', 'medium', 'high'];
+  const handleToggleTaskComplete = (
+    task: TodoTask,
+    parentTaskId: string | null = null
+  ) => {
+    const current = getTaskStatus(task);
+    const nextStatus: TodoStatus =
+      current === 'completed' ? 'not_started' : 'completed';
+    handleSetTaskStatus(task.id, nextStatus, parentTaskId);
+  };
+
+  const handleSetTaskPriority = (
+    taskId: string,
+    nextPriority: Priority,
+    parentTaskId: string | null = null
+  ) => {
+    setTodoLists((prev) =>
+      prev.map((list) => {
+        if (list.id !== currentTodoList.id) return list;
+        if (parentTaskId) {
+          return {
+            ...list,
+            tasks: list.tasks.map((parent) =>
+              parent.id === parentTaskId
+                ? {
+                    ...parent,
+                    children: (parent.children || []).map((sub) =>
+                      sub.id === taskId
+                        ? { ...sub, priority: nextPriority }
+                        : sub
+                    ),
+                  }
+                : parent
+            ),
+          };
+        }
+        return {
+          ...list,
+          tasks: list.tasks.map((t) =>
+            t.id === taskId ? { ...t, priority: nextPriority } : t
+          ),
+        };
+      })
+    );
+  };
+
+  // Plier / déplier l'affichage des sous-tâches directement depuis la tâche parente
+  const handleToggleCollapseSubtasks = (parentTaskId: string) => {
     setTodoLists((prev) =>
       prev.map((list) =>
         list.id === currentTodoList.id
           ? {
               ...list,
-              tasks: list.tasks.map((t) => {
-                if (t.id !== taskId) return t;
-                const nextPriority =
-                  order[(order.indexOf(t.priority) + 1) % order.length];
-                return { ...t, priority: nextPriority };
-              }),
+              tasks: list.tasks.map((t) =>
+                t.id === parentTaskId
+                  ? { ...t, collapsed: !Boolean(t.collapsed) }
+                  : t
+              ),
             }
           : list
       )
     );
   };
 
-  // Indenter / Désindenter une tâche pour la transformer en sous-tâche ou tâche principale
-  const handleToggleTaskIndent = (taskId: string, targetIndent?: number) => {
+  // Convertir une tâche principale en sous-tâche rattachée à une tâche parente cible
+  const handleNestTaskUnderParent = (taskId: string, targetParentId: string) => {
+    if (taskId === targetParentId) return;
     setTodoLists((prev) =>
-      prev.map((list) =>
-        list.id === currentTodoList.id
-          ? {
-              ...list,
-              tasks: list.tasks.map((t) => {
-                if (t.id !== taskId) return t;
-                const currentIndent = t.indentLevel ?? 0;
-                const nextIndent =
-                  targetIndent !== undefined
-                    ? targetIndent
-                    : currentIndent === 0
-                    ? 1
-                    : 0;
-                return { ...t, indentLevel: nextIndent };
-              }),
-            }
-          : list
-      )
+      prev.map((list) => {
+        if (list.id !== currentTodoList.id) return list;
+        const movingTask = list.tasks.find((t) => t.id === taskId);
+        if (!movingTask) return list;
+        // Évite d'imbriquer une tâche qui possède déjà ses propres sous-tâches
+        if (movingTask.children && movingTask.children.length > 0) return list;
+
+        const { children: _c, collapsed: _col, ...cleanSub } = movingTask;
+        return {
+          ...list,
+          tasks: list.tasks
+            .filter((t) => t.id !== taskId)
+            .map((t) =>
+              t.id === targetParentId
+                ? {
+                    ...t,
+                    collapsed: false,
+                    children: [...(t.children || []), cleanSub],
+                  }
+                : t
+            ),
+        };
+      })
     );
   };
 
-  // Glisser-déposer des tâches Todo (réorganisation + indentation horizontale au glisser)
+  // Promouvoir une sous-tâche imbriquée en tâche principale juste sous son ancien parent
+  const handlePromoteSubtask = (parentTaskId: string, subtaskId: string) => {
+    setTodoLists((prev) =>
+      prev.map((list) => {
+        if (list.id !== currentTodoList.id) return list;
+        const parentIdx = list.tasks.findIndex((t) => t.id === parentTaskId);
+        if (parentIdx === -1) return list;
+        const parent = list.tasks[parentIdx];
+        const sub = (parent.children || []).find((c) => c.id === subtaskId);
+        if (!sub) return list;
+
+        const updatedParent: TodoTask = {
+          ...parent,
+          children: (parent.children || []).filter((c) => c.id !== subtaskId),
+        };
+        const nextTasks = [...list.tasks];
+        nextTasks[parentIdx] = updatedParent;
+        nextTasks.splice(parentIdx + 1, 0, { ...sub });
+        return { ...list, tasks: nextTasks };
+      })
+    );
+  };
+
+  // Glisser-déposer des tâches principales et sous-tâches imbriquées
   const handleTaskDragStart = (
     e: React.DragEvent<HTMLElement>,
-    taskId: string
+    taskId: string,
+    parentTaskId: string | null = null
   ) => {
-    setDraggedTaskId(taskId);
+    e.stopPropagation();
+    const payload: TaskDragPayload = { taskId, parentTaskId };
+    setDraggedTask(payload);
     setDragStartX(e.clientX);
     e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', taskId);
+    e.dataTransfer.setData('text/plain', JSON.stringify(payload));
   };
 
   const handleTaskDragOver = (
@@ -853,6 +1211,7 @@ export const SidePanelApp: React.FC = () => {
     targetTaskId: string
   ) => {
     e.preventDefault();
+    e.stopPropagation();
     e.dataTransfer.dropEffect = 'move';
     if (dragOverTaskId !== targetTaskId) {
       setDragOverTaskId(targetTaskId);
@@ -861,68 +1220,171 @@ export const SidePanelApp: React.FC = () => {
 
   const handleTaskDrop = (
     e: React.DragEvent<HTMLElement>,
-    targetTaskId: string
+    targetTaskId: string,
+    targetParentTaskId: string | null = null
   ) => {
     e.preventDefault();
-    const sourceId = draggedTaskId || e.dataTransfer.getData('text/plain');
-    const deltaX = e.clientX - dragStartX;
+    e.stopPropagation();
 
-    setDraggedTaskId(null);
+    let source: TaskDragPayload | null = draggedTask;
+    if (!source) {
+      try {
+        source = JSON.parse(
+          e.dataTransfer.getData('text/plain')
+        ) as TaskDragPayload;
+      } catch {
+        source = null;
+      }
+    }
+
+    const deltaX = e.clientX - dragStartX;
+    setDraggedTask(null);
     setDragOverTaskId(null);
 
-    if (!sourceId) return;
+    if (!source || source.taskId === targetTaskId) return;
 
     setTodoLists((prev) =>
       prev.map((list) => {
         if (list.id !== currentTodoList.id) return list;
 
-        const sourceIdx = list.tasks.findIndex((t) => t.id === sourceId);
-        const targetIdx = list.tasks.findIndex((t) => t.id === targetTaskId);
-        if (sourceIdx === -1 || targetIdx === -1) return list;
+        // Cas 1 : Déplacement d'une tâche principale (emporte toutes ses sous-tâches)
+        if (!source!.parentTaskId) {
+          const sourceIdx = list.tasks.findIndex(
+            (t) => t.id === source!.taskId
+          );
+          if (sourceIdx === -1) return list;
+          const movingParent = list.tasks[sourceIdx];
+          const hasChildren = Boolean(
+            movingParent.children && movingParent.children.length > 0
+          );
 
-        // Si on dépose sur la même tâche avec un mouvement horizontal franc, on ajuste l'indentation
-        if (sourceId === targetTaskId) {
-          if (Math.abs(deltaX) > 28) {
-            const nextIndent = deltaX > 0 ? 1 : 0;
+          // Déposé sur une sous-tâche -> si sans enfants, rattache au parent de cette sous-tâche
+          if (targetParentTaskId) {
+            if (hasChildren || targetParentTaskId === movingParent.id) {
+              return list;
+            }
+            const { children: _c, collapsed: _col, ...cleanSub } = movingParent;
             return {
               ...list,
-              tasks: list.tasks.map((t) =>
-                t.id === sourceId ? { ...t, indentLevel: nextIndent } : t
-              ),
+              tasks: list.tasks
+                .filter((t) => t.id !== movingParent.id)
+                .map((parent) => {
+                  if (parent.id !== targetParentTaskId) return parent;
+                  const subs = [...(parent.children || [])];
+                  const subIdx = subs.findIndex((s) => s.id === targetTaskId);
+                  subs.splice(subIdx === -1 ? subs.length : subIdx, 0, cleanSub);
+                  return { ...parent, collapsed: false, children: subs };
+                }),
             };
           }
-          return list;
+
+          // Déposé sur une tâche principale avec mouvement franc vers la droite -> imbriquer en sous-tâche
+          if (!hasChildren && deltaX > 36) {
+            const { children: _c, collapsed: _col, ...cleanSub } = movingParent;
+            return {
+              ...list,
+              tasks: list.tasks
+                .filter((t) => t.id !== movingParent.id)
+                .map((parent) =>
+                  parent.id === targetTaskId
+                    ? {
+                        ...parent,
+                        collapsed: false,
+                        children: [...(parent.children || []), cleanSub],
+                      }
+                    : parent
+                ),
+            };
+          }
+
+          // Réorganisation standard de tâches principales (avec leurs sous-tâches rattachées)
+          const targetIdx = list.tasks.findIndex((t) => t.id === targetTaskId);
+          if (targetIdx === -1) return list;
+          const nextTasks = [...list.tasks];
+          const [removed] = nextTasks.splice(sourceIdx, 1);
+          nextTasks.splice(targetIdx, 0, removed);
+          return { ...list, tasks: nextTasks };
         }
 
-        const nextTasks = [...list.tasks];
-        const [movedTask] = nextTasks.splice(sourceIdx, 1);
+        // Cas 2 : Déplacement d'une sous-tâche
+        const srcParent = list.tasks.find((t) => t.id === source!.parentTaskId);
+        const movingSub = srcParent?.children?.find(
+          (c) => c.id === source!.taskId
+        );
+        if (!srcParent || !movingSub) return list;
 
-        // Si l'utilisateur glisse vers la droite (> 30px) en déposant, la tâche devient une sous-tâche
-        let newIndent = movedTask.indentLevel ?? 0;
-        if (deltaX > 30) newIndent = 1;
-        else if (deltaX < -30) newIndent = 0;
+        // Retirer la sous-tâche de son parent d'origine
+        const tasksWithoutSub = list.tasks.map((parent) =>
+          parent.id === srcParent.id
+            ? {
+                ...parent,
+                children: (parent.children || []).filter(
+                  (c) => c.id !== movingSub.id
+                ),
+              }
+            : parent
+        );
 
-        nextTasks.splice(targetIdx, 0, {
-          ...movedTask,
-          indentLevel: newIndent,
-        });
+        // Si déposée sur une autre sous-tâche -> réordonner / déplacer dans ce parent
+        if (targetParentTaskId) {
+          return {
+            ...list,
+            tasks: tasksWithoutSub.map((parent) => {
+              if (parent.id !== targetParentTaskId) return parent;
+              const subs = [...(parent.children || [])];
+              const subIdx = subs.findIndex((s) => s.id === targetTaskId);
+              subs.splice(subIdx === -1 ? subs.length : subIdx, 0, movingSub);
+              return { ...parent, collapsed: false, children: subs };
+            }),
+          };
+        }
 
-        return { ...list, tasks: nextTasks };
+        // Si déposée sur une tâche principale avec mouvement vers la gauche -> promouvoir en tâche principale
+        if (deltaX < -32) {
+          const targetIdx = tasksWithoutSub.findIndex(
+            (t) => t.id === targetTaskId
+          );
+          if (targetIdx === -1) return list;
+          const nextTasks = [...tasksWithoutSub];
+          nextTasks.splice(targetIdx, 0, { ...movingSub });
+          return { ...list, tasks: nextTasks };
+        }
+
+        // Sinon rattacher la sous-tâche à la tâche principale cible
+        return {
+          ...list,
+          tasks: tasksWithoutSub.map((parent) =>
+            parent.id === targetTaskId
+              ? {
+                  ...parent,
+                  collapsed: false,
+                  children: [...(parent.children || []), movingSub],
+                }
+              : parent
+          ),
+        };
       })
     );
   };
 
-  const handleStartTimerForTask = (task: TodoTask) => {
+  const handleStartTimerForTask = (
+    task: TodoTask,
+    parentTaskId: string | null = null
+  ) => {
     const mins = task.durationMinutes || 25;
     const durationSec = mins * 60;
+    const taskLabel =
+      task.text.trim() ||
+      task.description?.split('\n')[0]?.trim().slice(0, 50) ||
+      'Tâche Focus';
     const newTimer: TimerItem = {
       id: `timer_${Date.now()}`,
-      label: task.text,
+      label: taskLabel,
       durationSeconds: durationSec,
       remainingSeconds: durationSec,
       status: 'running',
       endTime: Date.now() + durationSec * 1000,
-      soundId: 'chime',
+      soundId: DEFAULT_TIMER_SOUND_ID,
       repeatAlarm: true,
       ringing: false,
       isTemporary: true,
@@ -931,32 +1393,36 @@ export const SidePanelApp: React.FC = () => {
     setTimers((prev) => [newTimer, ...prev]);
 
     if (getTaskStatus(task) === 'not_started') {
-      setTodoLists((prev) =>
-        prev.map((list) =>
-          list.id === currentTodoList.id
-            ? {
-                ...list,
-                tasks: list.tasks.map((t) =>
-                  t.id === task.id
-                    ? { ...t, status: 'in_progress', completed: false }
-                    : t
-                ),
-              }
-            : list
-        )
-      );
+      handleSetTaskStatus(task.id, 'in_progress', parentTaskId);
     }
 
-    showToast(`Minuteur (${mins}m) lancé pour « ${task.text} »`);
+    showToast(`Minuteur (${mins}m) lancé pour « ${taskLabel} »`);
   };
 
-  const handleDeleteTask = (taskId: string) => {
+  const handleDeleteTask = (
+    taskId: string,
+    parentTaskId: string | null = null
+  ) => {
     setTodoLists((prev) =>
-      prev.map((list) =>
-        list.id === currentTodoList.id
-          ? { ...list, tasks: list.tasks.filter((t) => t.id !== taskId) }
-          : list
-      )
+      prev.map((list) => {
+        if (list.id !== currentTodoList.id) return list;
+        if (parentTaskId) {
+          return {
+            ...list,
+            tasks: list.tasks.map((parent) =>
+              parent.id === parentTaskId
+                ? {
+                    ...parent,
+                    children: (parent.children || []).filter(
+                      (c) => c.id !== taskId
+                    ),
+                  }
+                : parent
+            ),
+          };
+        }
+        return { ...list, tasks: list.tasks.filter((t) => t.id !== taskId) };
+      })
     );
   };
 
@@ -976,10 +1442,11 @@ export const SidePanelApp: React.FC = () => {
   };
 
   const handleSendTaskToKanban = (task: TodoTask) => {
-    if (kanbans.length === 0) return;
+    if (customKanbanBoards.length === 0) return;
 
     const targetBoard =
-      kanbans.find((b) => b.id === activeKanbanId) || kanbans[0];
+      customKanbanBoards.find((b) => b.id === activeKanbanId) ||
+      customKanbanBoards[0];
 
     const priorityColorMap = {
       low: 'emerald',
@@ -987,11 +1454,15 @@ export const SidePanelApp: React.FC = () => {
       high: 'rose',
     } as const;
 
+    const hasTitle = Boolean(task.text.trim());
+    const desc = task.description || '';
     const newCard = {
       id: `card_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      title: task.text,
+      title: hasTitle
+        ? task.text
+        : desc.split('\n')[0]?.trim() || 'Tâche sans titre',
       description:
-        task.description ||
+        (hasTitle ? desc : desc.split('\n').slice(1).join('\n').trim()) ||
         `Importé depuis la liste « ${currentTodoList.title} »`,
       tag: currentTodoList.title,
       color: priorityColorMap[task.priority],
@@ -1023,8 +1494,57 @@ export const SidePanelApp: React.FC = () => {
     );
 
     const firstColTitle = targetBoard.columns[0]?.title || 'À faire';
-    showToast(`Envoyé vers « ${targetBoard.title} → ${firstColTitle} »`);
+    showToast(`Copié vers « ${targetBoard.title} → ${firstColTitle} »`);
   };
+
+  const openTaskContextMenuAt = (
+    taskId: string,
+    parentTaskId: string | null,
+    clientX: number,
+    clientY: number
+  ) => {
+    const menuWidth = 228;
+    const menuHeight = 310;
+    const clampedX = Math.max(
+      8,
+      Math.min(clientX, window.innerWidth - menuWidth - 8)
+    );
+    const clampedY = Math.max(
+      8,
+      Math.min(clientY, window.innerHeight - menuHeight - 8)
+    );
+    setTaskContextMenu({ taskId, parentTaskId, x: clampedX, y: clampedY });
+  };
+
+  // Résout les infos de la tâche actuellement ciblée par le menu contextuel
+  const activeContextMenuTarget = useMemo(() => {
+    if (!taskContextMenu) return null;
+    if (taskContextMenu.parentTaskId) {
+      const parent = currentTodoList.tasks.find(
+        (t) => t.id === taskContextMenu.parentTaskId
+      );
+      const sub = parent?.children?.find(
+        (c) => c.id === taskContextMenu.taskId
+      );
+      if (!parent || !sub) return null;
+      return {
+        task: sub,
+        parentTaskId: parent.id,
+        previousParent: null as TodoTask | null,
+      };
+    }
+    const idx = currentTodoList.tasks.findIndex(
+      (t) => t.id === taskContextMenu.taskId
+    );
+    if (idx === -1) return null;
+    const task = currentTodoList.tasks[idx];
+    // Tâche parente précédente éligible si l'élément actuel n'a pas déjà d'enfants
+    const previousParent =
+      idx > 0 && (!task.children || task.children.length === 0)
+        ? currentTodoList.tasks[idx - 1]
+        : null;
+    return { task, parentTaskId: null as string | null, previousParent };
+  }, [taskContextMenu, currentTodoList.tasks]);
 
   // ==========================================================================
   // Actions Multi-Notes (Couleurs de texte, Surligneur, Clear Formatting)
@@ -1085,6 +1605,30 @@ export const SidePanelApp: React.FC = () => {
     showToast('Note supprimée.');
   };
 
+  const handleStartTimerFromNote = (durationSeconds: number) => {
+    if (durationSeconds <= 0) return;
+    const noteLabel =
+      currentNote?.title.trim() || `Note (${formatSeconds(durationSeconds)})`;
+    const newTimer: TimerItem = {
+      id: `timer_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      label: noteLabel,
+      durationSeconds,
+      remainingSeconds: durationSeconds,
+      status: 'running',
+      endTime: Date.now() + durationSeconds * 1000,
+      soundId: DEFAULT_TIMER_SOUND_ID,
+      repeatAlarm: true,
+      ringing: false,
+      isTemporary: true,
+    };
+
+    setTimers((prev) => [newTimer, ...prev]);
+    openFloatingTimerWindow(newTimer.id);
+    showToast(
+      `Minuteur (${formatSeconds(durationSeconds)}) lancé dans la fenêtre flottante.`
+    );
+  };
+
   const handleSendNoteToTodo = (note: NoteItem) => {
     const plain = stripHtml(note.content).trim();
     const text =
@@ -1093,7 +1637,6 @@ export const SidePanelApp: React.FC = () => {
       id: `task_${Date.now()}`,
       text,
       description: plain.slice(0, 200),
-      indentLevel: 0,
       status: 'not_started',
       completed: false,
       priority: 'medium',
@@ -1110,9 +1653,13 @@ export const SidePanelApp: React.FC = () => {
   };
 
   const handleSendNoteToKanban = (note: NoteItem) => {
-    if (kanbans.length === 0) return;
+    if (customKanbanBoards.length === 0) {
+      handleSendNoteToTodo(note);
+      return;
+    }
     const targetBoard =
-      kanbans.find((b) => b.id === activeKanbanId) || kanbans[0];
+      customKanbanBoards.find((b) => b.id === activeKanbanId) ||
+      customKanbanBoards[0];
 
     const plain = stripHtml(note.content).trim();
     const newCard = {
@@ -1164,32 +1711,167 @@ export const SidePanelApp: React.FC = () => {
   return (
     <div className="h-screen flex flex-col bg-md-surface text-md-on-surface overflow-hidden transition-colors duration-150">
       {/* ====================================================================
-          BARRE SUPÉRIEURE
+          BARRE SUPÉRIEURE (AppBar avec barre d'onglets épinglable / rétractable)
           ==================================================================== */}
       <header className="shrink-0 z-20 bg-md-surface border-b border-md-outline px-3.5 py-2.5">
-        <div className="flex items-center justify-between gap-2 mb-2.5">
-          <div className="flex items-center gap-2.5">
+        <div
+          className={`flex items-center justify-between gap-2 ${
+            isTabBarPinned || showThemePicker ? 'mb-2.5' : 'mb-0'
+          }`}
+        >
+          <div className="flex items-center gap-2.5 min-w-0 relative">
             <img
               src="/icons/icon48.png"
               alt="KronoTab"
-              className="w-7 h-7 rounded-xl"
+              className="w-7 h-7 rounded-xl shrink-0"
             />
-            <div>
-              <h1 className="text-sm font-bold tracking-tight text-md-on-surface leading-none">
-                KronoTab
-              </h1>
-              <p className="text-[10px] text-md-on-surface-variant mt-0.5">
-                Workspace Productivité
-              </p>
-            </div>
+            {isTabBarPinned ? (
+              <div className="min-w-0">
+                <h1 className="text-sm font-bold tracking-tight text-md-on-surface leading-none truncate">
+                  KronoTab
+                </h1>
+                <p className="text-[10px] text-md-on-surface-variant mt-0.5 truncate">
+                  Workspace Productivité
+                </p>
+              </div>
+            ) : (
+              <>
+                <button
+                  ref={sectionNavButtonRef}
+                  type="button"
+                  onClick={() => {
+                    setShowSectionNavMenu((prev) => !prev);
+                    setShowOptionsMenu(false);
+                    setShowThemePicker(false);
+                  }}
+                  aria-expanded={showSectionNavMenu}
+                  aria-haspopup="menu"
+                  title="Changer de section ou réépingler la barre d'onglets"
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-bold transition-colors ${
+                    showSectionNavMenu
+                      ? 'bg-md-primary-container text-md-on-primary-container'
+                      : 'bg-md-surface-container hover:bg-md-surface-high text-md-on-surface'
+                  }`}
+                >
+                  {activeTab === 'timers' && <IconTimer size={14} className="text-md-primary" />}
+                  {activeTab === 'todos' && <IconCheckCircle size={14} className="text-md-primary" />}
+                  {activeTab === 'notes' && <IconNote size={14} className="text-md-primary" />}
+                  <span>
+                    {activeTab === 'timers'
+                      ? 'Timers'
+                      : activeTab === 'todos'
+                      ? 'Todos'
+                      : 'Notes'}
+                  </span>
+                  {activeTab === 'timers' && runningTimersCount > 0 && (
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-md-primary text-md-on-primary">
+                      {runningTimersCount}
+                    </span>
+                  )}
+                  <IconChevronDown
+                    size={13}
+                    className={`text-md-on-surface-variant transition-transform duration-150 ${
+                      showSectionNavMenu ? 'rotate-180' : ''
+                    }`}
+                  />
+                </button>
+
+                {showSectionNavMenu && (
+                  <div
+                    ref={sectionNavMenuRef}
+                    className="krono-menu-enter absolute left-0 top-10 w-56 rounded-2xl bg-md-surface-container border border-md-outline shadow-2xl py-1.5 z-50"
+                  >
+                    {(
+                      [
+                        {
+                          id: 'todos',
+                          label: 'Todos',
+                          icon: <IconCheckCircle size={14} />,
+                          badge: pendingTodosCount > 0 ? pendingTodosCount : null,
+                          highlight: false,
+                        },
+                        {
+                          id: 'timers',
+                          label: 'Timers',
+                          icon: <IconTimer size={14} />,
+                          badge: runningTimersCount > 0 ? runningTimersCount : null,
+                          highlight: runningTimersCount > 0,
+                        },
+                        {
+                          id: 'notes',
+                          label: 'Notes',
+                          icon: <IconNote size={14} />,
+                          badge: notes.length,
+                          highlight: false,
+                        },
+                      ] as const
+                    ).map((sec) => {
+                      const isActive = activeTab === sec.id;
+                      return (
+                        <button
+                          key={sec.id}
+                          type="button"
+                          onClick={() => {
+                            setActiveTab(sec.id);
+                            setShowSectionNavMenu(false);
+                          }}
+                          className={`w-full px-3.5 py-2 text-left text-xs font-semibold flex items-center justify-between gap-2 transition-colors ${
+                            isActive
+                              ? 'bg-md-primary-container/65 text-md-on-primary-container'
+                              : 'text-md-on-surface hover:bg-md-surface-high'
+                          }`}
+                        >
+                          <span className="flex items-center gap-2.5">
+                            <span className={isActive ? 'text-md-on-primary-container' : 'text-md-primary'}>
+                              {sec.icon}
+                            </span>
+                            <span>{sec.label}</span>
+                          </span>
+                          <span className="flex items-center gap-1.5">
+                            {sec.badge !== null && (
+                              <span
+                                className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                                  sec.highlight
+                                    ? 'bg-md-primary text-md-on-primary'
+                                    : 'bg-md-surface text-md-on-surface-variant'
+                                }`}
+                              >
+                                {sec.badge}
+                              </span>
+                            )}
+                            {isActive && <IconCheck size={12} />}
+                          </span>
+                        </button>
+                      );
+                    })}
+
+                    <div className="h-px bg-md-outline my-1" />
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsTabBarPinned(true);
+                        setShowSectionNavMenu(false);
+                      }}
+                      className="w-full px-3.5 py-2 text-left text-xs font-medium text-md-on-surface hover:bg-md-surface-high flex items-center gap-2.5 transition-colors"
+                    >
+                      <IconPin size={14} className="text-md-primary" />
+                      <span>Épingler la barre d'onglets</span>
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
-          <div className="flex items-center gap-1.5 relative">
+          <div className="flex items-center gap-1.5 relative shrink-0">
             <button
+              ref={themeButtonRef}
               type="button"
               onClick={() => {
                 setShowThemePicker((prev) => !prev);
                 setShowOptionsMenu(false);
+                setShowSectionNavMenu(false);
               }}
               className={`h-8 w-8 rounded-full flex items-center justify-center transition-colors ${
                 showThemePicker
@@ -1211,10 +1893,12 @@ export const SidePanelApp: React.FC = () => {
             </button>
 
             <button
+              ref={optionsButtonRef}
               type="button"
               onClick={() => {
                 setShowOptionsMenu((prev) => !prev);
                 setShowThemePicker(false);
+                setShowSectionNavMenu(false);
               }}
               className={`h-8 w-8 rounded-full flex items-center justify-center transition-colors ${
                 showOptionsMenu
@@ -1227,17 +1911,40 @@ export const SidePanelApp: React.FC = () => {
             </button>
 
             {showOptionsMenu && (
-              <div className="absolute right-0 top-10 w-64 rounded-2xl bg-md-surface-container shadow-2xl py-1.5 z-50">
+              <div
+                ref={optionsMenuRef}
+                className="krono-menu-enter absolute right-0 top-10 w-64 rounded-2xl bg-md-surface-container border border-md-outline shadow-2xl py-1.5 z-50"
+              >
+                {isInSidePanel && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowOptionsMenu(false);
+                        openStandaloneAppWindow();
+                      }}
+                      className="w-full px-3.5 py-2.5 text-left text-xs font-medium text-md-on-surface hover:bg-md-surface-high flex items-center gap-2.5 transition-colors"
+                    >
+                      <IconPipWindow size={15} className="text-md-primary" />
+                      <span>Lancer dans une fenêtre indépendante</span>
+                    </button>
+                    <div className="h-px bg-md-outline my-1" />
+                  </>
+                )}
                 <button
                   type="button"
                   onClick={() => {
                     setShowOptionsMenu(false);
-                    openStandaloneAppWindow();
+                    setIsTabBarPinned((prev) => !prev);
                   }}
                   className="w-full px-3.5 py-2.5 text-left text-xs font-medium text-md-on-surface hover:bg-md-surface-high flex items-center gap-2.5 transition-colors"
                 >
-                  <IconPipWindow size={15} className="text-md-primary" />
-                  <span>Lancer dans une fenêtre indépendante</span>
+                  <IconPin size={15} className="text-md-primary" />
+                  <span>
+                    {isTabBarPinned
+                      ? "Masquer la barre d'onglets"
+                      : "Épingler la barre d'onglets"}
+                  </span>
                 </button>
                 <div className="h-px bg-md-outline my-1" />
                 <button
@@ -1259,7 +1966,12 @@ export const SidePanelApp: React.FC = () => {
 
         {/* Sélecteur de Thème Chrome */}
         {showThemePicker && (
-          <div className="mb-2.5 p-3 rounded-2xl bg-md-surface-container space-y-2.5">
+          <div
+            ref={themePickerRef}
+            className={`krono-menu-enter p-3 rounded-2xl bg-md-surface-container border border-md-outline space-y-2.5 ${
+              isTabBarPinned ? 'mb-2.5' : 'mb-0'
+            }`}
+          >
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-semibold text-md-on-surface-variant">
                 Apparence Chrome
@@ -1312,57 +2024,71 @@ export const SidePanelApp: React.FC = () => {
           </div>
         )}
 
-        {/* Barre d'onglets segmentée */}
-        <nav className="grid grid-cols-3 gap-1 bg-md-surface-container p-1 rounded-full">
-          <button
-            onClick={() => setActiveTab('timers')}
-            className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-full text-xs font-semibold transition-colors ${
-              activeTab === 'timers'
-                ? 'bg-md-primary-container text-md-on-primary-container'
-                : 'text-md-on-surface-variant hover:text-md-on-surface'
-            }`}
-          >
-            <IconTimer size={14} />
-            <span>Timers</span>
-            {runningTimersCount > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-md-primary text-md-on-primary">
-                {runningTimersCount}
-              </span>
-            )}
-          </button>
+        {/* Barre d'onglets segmentée (visible en mode épinglé + bouton désépingler) */}
+        {isTabBarPinned && (
+          <div className="flex items-center gap-1.5">
+            <nav className="flex-1 grid grid-cols-3 gap-1 bg-md-surface-container p-1 rounded-full min-w-0">
+              <button
+                onClick={() => setActiveTab('timers')}
+                className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-full text-xs font-semibold transition-colors ${
+                  activeTab === 'timers'
+                    ? 'bg-md-primary-container text-md-on-primary-container'
+                    : 'text-md-on-surface-variant hover:text-md-on-surface'
+                }`}
+              >
+                <IconTimer size={14} />
+                <span>Timers</span>
+                {runningTimersCount > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-md-primary text-md-on-primary">
+                    {runningTimersCount}
+                  </span>
+                )}
+              </button>
 
-          <button
-            onClick={() => setActiveTab('todos')}
-            className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-full text-xs font-semibold transition-colors ${
-              activeTab === 'todos'
-                ? 'bg-md-primary-container text-md-on-primary-container'
-                : 'text-md-on-surface-variant hover:text-md-on-surface'
-            }`}
-          >
-            <IconCheckCircle size={14} />
-            <span>Todos</span>
-            {pendingTodosCount > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-semibold bg-md-surface-high text-md-on-surface">
-                {pendingTodosCount}
-              </span>
-            )}
-          </button>
+              <button
+                onClick={() => setActiveTab('todos')}
+                className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-full text-xs font-semibold transition-colors ${
+                  activeTab === 'todos'
+                    ? 'bg-md-primary-container text-md-on-primary-container'
+                    : 'text-md-on-surface-variant hover:text-md-on-surface'
+                }`}
+              >
+                <IconCheckCircle size={14} />
+                <span>Todos</span>
+                {pendingTodosCount > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-semibold bg-md-surface-high text-md-on-surface">
+                    {pendingTodosCount}
+                  </span>
+                )}
+              </button>
 
-          <button
-            onClick={() => setActiveTab('notes')}
-            className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-full text-xs font-semibold transition-colors ${
-              activeTab === 'notes'
-                ? 'bg-md-primary-container text-md-on-primary-container'
-                : 'text-md-on-surface-variant hover:text-md-on-surface'
-            }`}
-          >
-            <IconNote size={14} />
-            <span>Notes</span>
-            <span className="px-1.5 py-0.2 rounded-full text-[10px] font-semibold bg-md-surface-high text-md-on-surface">
-              {notes.length}
-            </span>
-          </button>
-        </nav>
+              <button
+                onClick={() => setActiveTab('notes')}
+                className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-full text-xs font-semibold transition-colors ${
+                  activeTab === 'notes'
+                    ? 'bg-md-primary-container text-md-on-primary-container'
+                    : 'text-md-on-surface-variant hover:text-md-on-surface'
+                }`}
+              >
+                <IconNote size={14} />
+                <span>Notes</span>
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-semibold bg-md-surface-high text-md-on-surface">
+                  {notes.length}
+                </span>
+              </button>
+            </nav>
+
+            <button
+              type="button"
+              onClick={() => setIsTabBarPinned(false)}
+              className="h-8 w-8 rounded-full bg-md-surface-container hover:bg-md-surface-high text-md-primary flex items-center justify-center shrink-0 transition-colors"
+              title="Désépingler et masquer la barre d'onglets"
+              aria-label="Désépingler la barre d'onglets"
+            >
+              <IconPin size={13} />
+            </button>
+          </div>
+        )}
       </header>
 
       {/* Toast */}
@@ -1478,7 +2204,7 @@ export const SidePanelApp: React.FC = () => {
                             </span>
 
                             <select
-                              value={timer.soundId || 'chime'}
+                              value={timer.soundId || DEFAULT_TIMER_SOUND_ID}
                               onChange={(e) =>
                                 handleChangeTimerSound(
                                   timer.id,
@@ -1620,6 +2346,7 @@ export const SidePanelApp: React.FC = () => {
               type="button"
               onClick={() => {
                 applyTimerPresetMinutes(30);
+                setNewTimerSound(DEFAULT_TIMER_SOUND_ID);
                 setIsTimerModalOpen(true);
               }}
               className="flex-1 py-2 px-4 rounded-full bg-md-primary text-md-on-primary text-xs font-bold hover:opacity-90 transition-opacity flex items-center justify-center gap-1.5"
@@ -1646,13 +2373,18 @@ export const SidePanelApp: React.FC = () => {
       )}
 
       {/* ====================================================================
-          ONGLET 2 : MULTI-TODOS (Édition, Durée, Indentation, Drag & Drop)
+          ONGLET 2 : MULTI-TODOS (Style épuré Google Tasks, Sous-tâches imbriquées)
           ==================================================================== */}
       {activeTab === 'todos' && (
         <>
-          <main className="flex-1 overflow-y-auto p-3.5 pb-28 space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <div className="inline-flex items-center gap-2 bg-md-surface-container border border-md-outline rounded-full px-3 py-1.5">
+          <main
+            onScroll={() => {
+              if (taskContextMenu) setTaskContextMenu(null);
+            }}
+            className="flex-1 overflow-y-auto px-3 py-3 pb-28 space-y-2.5"
+          >
+            <div className="flex items-center justify-between gap-2 px-0.5">
+              <div className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 hover:bg-md-surface-container transition-colors">
                 <IconFolder size={13} className="text-md-primary" />
                 <select
                   value={currentTodoList.id}
@@ -1679,6 +2411,7 @@ export const SidePanelApp: React.FC = () => {
 
               {completedTasksCount > 0 && todoFilter === 'completed' && (
                 <button
+                  type="button"
                   onClick={handleClearCompletedTasks}
                   className="inline-flex items-center gap-1 text-[11px] font-medium text-md-on-surface-variant hover:text-rose-500 transition-colors"
                 >
@@ -1688,13 +2421,12 @@ export const SidePanelApp: React.FC = () => {
               )}
             </div>
 
-            {/* Filtres : Actives (masque les terminées) / Non commencé / En cours / Terminées */}
-            <div className="grid grid-cols-4 gap-1 bg-md-surface-container p-1 rounded-full">
+            {/* 3 filtres distincts et sans doublon : Actives / En cours / Terminées */}
+            <div className="grid grid-cols-3 gap-1 bg-md-surface-container/70 p-0.5 rounded-full">
               {(
                 [
                   { id: 'active', label: `Actives (${pendingTodosCount})` },
-                  { id: 'not_started', label: 'Non commencé' },
-                  { id: 'in_progress', label: 'En cours' },
+                  { id: 'in_progress', label: `En cours (${inProgressTodosCount})` },
                   {
                     id: 'completed',
                     label: `Terminées (${completedTasksCount})`,
@@ -1703,10 +2435,11 @@ export const SidePanelApp: React.FC = () => {
               ).map((tab) => (
                 <button
                   key={tab.id}
+                  type="button"
                   onClick={() => setTodoFilter(tab.id)}
-                  className={`py-1 px-1.5 rounded-full text-[10px] font-semibold truncate transition-colors ${
+                  className={`py-1 px-2 rounded-full text-[10.5px] font-semibold truncate transition-colors ${
                     todoFilter === tab.id
-                      ? 'bg-md-primary-container text-md-on-primary-container'
+                      ? 'bg-md-surface text-md-on-surface shadow-sm'
                       : 'text-md-on-surface-variant hover:text-md-on-surface'
                   }`}
                 >
@@ -1715,213 +2448,869 @@ export const SidePanelApp: React.FC = () => {
               ))}
             </div>
 
-            {/* Liste des tâches & sous-tâches (Drag & Drop + Indentation) */}
-            <section className="space-y-2">
+            {/* Liste épurée des tâches & sous-tâches réellement imbriquées */}
+            <section className="divide-y divide-md-outline-subtle">
               {filteredTasks.length === 0 ? (
-                <div className="text-center py-10 px-4 rounded-2xl bg-md-surface-container text-md-on-surface-variant text-xs">
+                <div className="text-center py-12 px-4 text-md-on-surface-variant text-xs">
                   {todoFilter === 'completed'
                     ? 'Aucune tâche terminée.'
+                    : todoFilter === 'in_progress'
+                    ? 'Aucune tâche en cours.'
                     : 'Aucune tâche active. Cliquez sur + Nouvelle tâche en bas.'}
                 </div>
               ) : (
                 filteredTasks.map((task) => {
                   const status = getTaskStatus(task);
-                  const statusMeta = STATUS_META[status];
-                  const prioStyle = PRIORITY_STYLES[task.priority];
                   const isCompleted = status === 'completed';
-                  const isSubtask = (task.indentLevel ?? 0) > 0;
+                  const isInProgress = status === 'in_progress';
+                  const children = task.children || [];
+                  const hasChildren = children.length > 0;
+                  const completedChildrenCount = children.filter(
+                    (c) => getTaskStatus(c) === 'completed'
+                  ).length;
+                  const isCollapsed = Boolean(task.collapsed);
+                  const isDescExpanded = Boolean(expandedDescIds[task.id]);
+                  const isEditingThisDesc =
+                    inlineEditDesc?.taskId === task.id &&
+                    !inlineEditDesc.parentTaskId;
                   const isDragTarget = dragOverTaskId === task.id;
+                  const isBeingDragged =
+                    draggedTask?.taskId === task.id &&
+                    !draggedTask.parentTaskId;
+                  const isContextOpen =
+                    taskContextMenu?.taskId === task.id &&
+                    !taskContextMenu.parentTaskId;
+                  const isQuickAddBelow = quickAddTask?.afterTaskId === task.id;
 
                   return (
                     <div
                       key={task.id}
-                      draggable
-                      onDragStart={(e) => handleTaskDragStart(e, task.id)}
-                      onDragOver={(e) => handleTaskDragOver(e, task.id)}
-                      onDrop={(e) => handleTaskDrop(e, task.id)}
-                      onDragEnd={() => {
-                        setDraggedTaskId(null);
-                        setDragOverTaskId(null);
-                      }}
-                      className={`group relative p-2.5 rounded-2xl border transition-all cursor-grab active:cursor-grabbing ${
-                        isSubtask
-                          ? 'ml-6 border-l-4 border-l-md-primary bg-md-surface-container/80'
-                          : 'bg-md-surface-container'
-                      } ${
-                        isDragTarget
-                          ? 'border-md-primary ring-1 ring-md-primary'
-                          : status === 'in_progress'
-                          ? 'border-sky-500/40'
-                          : 'border-transparent'
-                      } ${
-                        draggedTaskId === task.id ? 'opacity-40 scale-95' : ''
+                      className={`group/task relative py-0.5 transition-opacity ${
+                        isBeingDragged ? 'opacity-40' : ''
                       }`}
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-start gap-2 min-w-0 flex-1">
-                          {/* Poignée Drag & Drop */}
-                          <span
-                            className="mt-1 text-md-on-surface-variant opacity-40 group-hover:opacity-90 cursor-grab"
-                            title="Glisser pour réorganiser (glisser vers la droite pour indenter en sous-tâche)"
-                          >
-                            <IconGripVertical size={13} />
-                          </span>
+                      {/* Ligne de la tâche parente (minimaliste style Google Tasks) */}
+                      <div
+                        draggable={!isEditingThisDesc}
+                        onDragStart={(e) => handleTaskDragStart(e, task.id, null)}
+                        onDragOver={(e) => handleTaskDragOver(e, task.id)}
+                        onDrop={(e) => handleTaskDrop(e, task.id, null)}
+                        onDragEnd={() => {
+                          setDraggedTask(null);
+                          setDragOverTaskId(null);
+                        }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          openTaskContextMenuAt(task.id, null, e.clientX, e.clientY);
+                        }}
+                        className={`group flex items-start gap-2.5 px-2 py-2 rounded-xl transition-colors ${
+                          isDragTarget
+                            ? 'bg-md-primary-container/35 ring-1 ring-md-primary'
+                            : isContextOpen
+                            ? 'bg-md-surface-container/90'
+                            : 'hover:bg-md-surface-container/55'
+                        }`}
+                      >
+                        {/* Cercle de validation / état épuré */}
+                        <button
+                          type="button"
+                          onClick={() => handleToggleTaskComplete(task, null)}
+                          className={`mt-0.5 w-[18px] h-[18px] rounded-full flex items-center justify-center shrink-0 transition-all active:scale-90 ${
+                            isCompleted
+                              ? 'bg-md-primary text-md-on-primary border border-md-primary'
+                              : isInProgress
+                              ? 'border-[1.5px] border-sky-500 text-sky-500 bg-sky-500/10'
+                              : 'border-[1.5px] border-md-on-surface-variant/55 hover:border-md-primary text-transparent hover:text-md-primary/40'
+                          }`}
+                          title={
+                            isCompleted
+                              ? 'Marquer comme non terminée'
+                              : 'Marquer comme terminée'
+                          }
+                        >
+                          {isCompleted ? (
+                            <IconCheck size={11} strokeWidth={2.5} />
+                          ) : isInProgress ? (
+                            <span className="w-2 h-2 rounded-full bg-sky-500" />
+                          ) : (
+                            <IconCheck size={10} />
+                          )}
+                        </button>
 
-                          {/* Bouton Statut */}
-                          <button
-                            type="button"
-                            onClick={() => handleCycleTaskStatus(task.id)}
-                            className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center border shrink-0 transition-transform active:scale-90 ${statusMeta.badge}`}
-                            title={`Statut : ${statusMeta.label} (cliquer pour faire évoluer)`}
-                          >
-                            {statusMeta.renderIcon(11)}
-                          </button>
-
-                          <div className="min-w-0 flex-1">
-                            <p
-                              className={`text-xs font-bold break-words leading-snug ${
+                        {/* Contenu minimaliste de la tâche */}
+                        <div className="min-w-0 flex-1">
+                          {task.text.trim() && (
+                            <TruncatedTitle
+                              text={task.text}
+                              onDoubleClick={() => openEditTaskModal(task, null)}
+                              className={`text-[13px] font-medium leading-snug cursor-default ${
                                 isCompleted
-                                  ? 'line-through text-md-on-surface-variant'
+                                  ? 'line-through text-md-on-surface-variant/65'
                                   : 'text-md-on-surface'
                               }`}
-                            >
-                              {task.text}
-                            </p>
+                            />
+                          )}
 
-                            {task.description && (
-                              <p className="text-[11px] text-md-on-surface-variant mt-0.5 leading-relaxed break-words">
+                          {/* Description : clic = plier/déplier, double-clic = édition à la volée sans bordure */}
+                          {isEditingThisDesc ? (
+                            <textarea
+                              autoFocus
+                              value={inlineEditDesc.value}
+                              onChange={(e) =>
+                                setInlineEditDesc((prev) =>
+                                  prev ? { ...prev, value: e.target.value } : null
+                                )
+                              }
+                              onBlur={handleCommitInlineEditDescription}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Escape') {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setInlineEditDesc(null);
+                                } else if (
+                                  e.key === 'Enter' &&
+                                  (e.ctrlKey || e.metaKey)
+                                ) {
+                                  e.preventDefault();
+                                  handleCommitInlineEditDescription();
+                                }
+                              }}
+                              style={
+                                {
+                                  '--krono-min-lines': '1.6lh',
+                                  '--krono-max-lines': '10lh',
+                                } as React.CSSProperties
+                              }
+                              className={`krono-autogrow-textarea bg-transparent border-none outline-none focus:outline-none p-0 m-0 leading-snug ${
+                                task.text.trim()
+                                  ? 'mt-0.5 text-[11px] text-md-on-surface-variant'
+                                  : 'text-[13px] text-md-on-surface'
+                              }`}
+                            />
+                          ) : (
+                            task.description && (
+                              <p
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDescriptionClick(task.id);
+                                }}
+                                onDoubleClick={(e) => {
+                                  e.stopPropagation();
+                                  handleStartInlineEditDescription(task, null);
+                                }}
+                                title="Cliquer pour plier/déplier • Double-cliquer pour modifier"
+                                className={`cursor-pointer break-words leading-snug transition-colors ${
+                                  task.text.trim()
+                                    ? 'text-[11px] text-md-on-surface-variant/85 mt-0.5 hover:text-md-on-surface'
+                                    : `text-[13px] font-medium ${
+                                        isCompleted
+                                          ? 'line-through text-md-on-surface-variant/65'
+                                          : 'text-md-on-surface'
+                                      }`
+                                } ${
+                                  isDescExpanded
+                                    ? 'whitespace-pre-wrap'
+                                    : 'line-clamp-1'
+                                }`}
+                              >
                                 {task.description}
                               </p>
-                            )}
+                            )
+                          )}
 
-                            {/* Badges : Statut, Priorité, Durée */}
-                            <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                              <button
-                                type="button"
-                                onClick={() => handleCycleTaskStatus(task.id)}
-                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${statusMeta.badge}`}
-                                title="Cliquer pour changer le statut"
-                              >
-                                <span
-                                  className={`w-1.5 h-1.5 rounded-full ${statusMeta.dot}`}
-                                />
-                                <span>{statusMeta.label}</span>
-                              </button>
+                          {/* Métadonnées discrètes uniquement si pertinentes */}
+                          {(isInProgress ||
+                            task.priority === 'high' ||
+                            task.durationMinutes ||
+                            hasChildren) && (
+                            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 mt-1 text-[11px] text-md-on-surface-variant">
+                              {hasChildren && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleToggleCollapseSubtasks(task.id);
+                                  }}
+                                  className="inline-flex items-center gap-0.5 text-md-on-surface-variant hover:text-md-on-surface font-medium transition-colors"
+                                  title={
+                                    isCollapsed
+                                      ? 'Afficher les sous-tâches'
+                                      : 'Masquer les sous-tâches'
+                                  }
+                                >
+                                  {isCollapsed ? (
+                                    <IconChevronRight size={12} />
+                                  ) : (
+                                    <IconChevronDown size={12} />
+                                  )}
+                                  <span>
+                                    {completedChildrenCount}/{children.length}
+                                  </span>
+                                </button>
+                              )}
 
-                              <button
-                                type="button"
-                                onClick={() => handleCycleTaskPriority(task.id)}
-                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${prioStyle.badge}`}
-                                title="Cliquer pour changer la priorité"
-                              >
-                                {prioStyle.renderIcon(10)}
-                                <span>{prioStyle.label}</span>
-                              </button>
+                              {isInProgress && (
+                                <span className="inline-flex items-center gap-1 text-sky-600 dark:text-sky-400 font-medium">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
+                                  <span>En cours</span>
+                                </span>
+                              )}
+
+                              {task.priority === 'high' && !isCompleted && (
+                                <span className="inline-flex items-center gap-1 text-rose-600 dark:text-rose-400 font-medium">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                                  <span>Prioritaire</span>
+                                </span>
+                              )}
 
                               {task.durationMinutes && (
                                 <button
                                   type="button"
-                                  onClick={() => handleStartTimerForTask(task)}
-                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-md-surface border border-md-outline text-md-on-surface-variant hover:text-md-primary"
-                                  title="Cliquer pour lancer le minuteur avec cette durée"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleStartTimerForTask(task, null);
+                                  }}
+                                  className="inline-flex items-center gap-1 hover:text-md-primary transition-colors"
+                                  title="Lancer le minuteur pour cette tâche"
                                 >
-                                  <IconClock size={10} />
+                                  <IconClock size={11} />
                                   <span>{task.durationMinutes} min</span>
                                 </button>
                               )}
                             </div>
-                          </div>
+                          )}
                         </div>
 
-                        {/* Barre d'actions rapides de la tâche */}
-                        <div className="flex flex-col items-end gap-1 shrink-0">
-                          <div className="flex items-center gap-0.5">
-                            {/* Ajouter une sous-tâche directement sous cette tâche */}
+                        {/* Contrôles discrets à droite : plier/déplier (si sous-tâches) + menu contextuel */}
+                        <div className="flex items-center gap-0.5 shrink-0">
+                          {hasChildren && (
                             <button
                               type="button"
-                              onClick={() =>
-                                openCreateTaskModal({
-                                  afterTaskId: task.id,
-                                  indentLevel: 1,
-                                })
-                              }
-                              className="p-1 rounded-full hover:bg-md-surface text-md-on-surface-variant hover:text-md-primary"
-                              title="Ajouter une sous-tâche sous cet élément"
-                            >
-                              <IconPlus size={12} />
-                            </button>
-
-                            {/* Indenter / Désindenter (Transformer en sous-tâche / tâche principale) */}
-                            <button
-                              type="button"
-                              onClick={() => handleToggleTaskIndent(task.id)}
-                              className="p-1 rounded-full hover:bg-md-surface text-md-on-surface-variant hover:text-md-on-surface"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleToggleCollapseSubtasks(task.id);
+                              }}
+                              className="w-6 h-6 rounded-full flex items-center justify-center text-md-on-surface-variant hover:text-md-on-surface hover:bg-md-surface-high transition-colors"
                               title={
-                                isSubtask
-                                  ? 'Promouvoir en tâche principale (Désindenter)'
-                                  : 'Transformer en sous-tâche (Mettre en retrait)'
+                                isCollapsed
+                                  ? 'Déplier les sous-tâches'
+                                  : 'Réduire les sous-tâches'
                               }
                             >
-                              {isSubtask ? (
-                                <IconOutdent size={12} />
+                              {isCollapsed ? (
+                                <IconChevronRight size={13} />
                               ) : (
-                                <IconIndent size={12} />
+                                <IconChevronDown size={13} />
                               )}
                             </button>
+                          )}
 
-                            {/* Modifier la tâche */}
-                            <button
-                              type="button"
-                              onClick={() => openEditTaskModal(task)}
-                              className="p-1 rounded-full hover:bg-md-surface text-md-on-surface-variant hover:text-md-primary"
-                              title="Modifier cette tâche"
-                            >
-                              <IconEdit size={12} />
-                            </button>
-
-                            {/* Supprimer la tâche */}
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteTask(task.id)}
-                              className="p-1 rounded-full hover:bg-md-surface text-md-on-surface-variant hover:text-rose-500"
-                              title="Supprimer la tâche"
-                            >
-                              <IconClose size={12} />
-                            </button>
-                          </div>
-
-                          <div className="flex items-center gap-1">
-                            {/* Lancer un minuteur */}
-                            <button
-                              type="button"
-                              onClick={() => handleStartTimerForTask(task)}
-                              className="p-1 rounded-full bg-md-surface hover:bg-md-primary-container text-md-on-surface-variant hover:text-md-on-primary-container border border-md-outline transition-colors"
-                              title={`Lancer un minuteur (${
-                                task.durationMinutes || 25
-                              } min) pour cette tâche`}
-                            >
-                              <IconTimer size={12} />
-                            </button>
-
-                            {/* Envoyer vers Kanban */}
-                            <button
-                              type="button"
-                              onClick={() => handleSendTaskToKanban(task)}
-                              className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-md-primary-container text-md-on-primary-container text-[10px] font-semibold hover:opacity-90"
-                              title="Envoyer vers le Kanban"
-                            >
-                              <IconArrowRight size={10} />
-                              <span>Kanban</span>
-                            </button>
-                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const rect =
+                                e.currentTarget.getBoundingClientRect();
+                              openTaskContextMenuAt(
+                                task.id,
+                                null,
+                                rect.right - 220,
+                                rect.bottom + 4
+                              );
+                            }}
+                            className={`w-6 h-6 rounded-full flex items-center justify-center text-md-on-surface-variant hover:text-md-on-surface hover:bg-md-surface-high transition-opacity ${
+                              isContextOpen
+                                ? 'opacity-100 bg-md-surface-high text-md-on-surface'
+                                : 'opacity-45 group-hover:opacity-100 focus:opacity-100'
+                            }`}
+                            title="Actions de la tâche"
+                            aria-label="Actions de la tâche"
+                          >
+                            <IconMoreVertical size={14} />
+                          </button>
                         </div>
                       </div>
+
+                      {/* Sous-tâches réellement imbriquées et pliables/dépliables */}
+                      {hasChildren && (
+                        <div
+                          className="krono-collapsible"
+                          data-collapsed={isCollapsed ? 'true' : 'false'}
+                        >
+                          <div className="krono-collapsible-inner">
+                            <div className="ml-6 pl-2.5 border-l border-md-outline-subtle space-y-0.5 pb-1">
+                              {children.map((sub) => {
+                                const subStatus = getTaskStatus(sub);
+                                const subCompleted = subStatus === 'completed';
+                                const subInProgress =
+                                  subStatus === 'in_progress';
+                                const subDescExpanded = Boolean(
+                                  expandedDescIds[sub.id]
+                                );
+                                const isEditingSubDesc =
+                                  inlineEditDesc?.taskId === sub.id &&
+                                  inlineEditDesc.parentTaskId === task.id;
+                                const subDragTarget =
+                                  dragOverTaskId === sub.id;
+                                const subBeingDragged =
+                                  draggedTask?.taskId === sub.id &&
+                                  draggedTask.parentTaskId === task.id;
+                                const subContextOpen =
+                                  taskContextMenu?.taskId === sub.id &&
+                                  taskContextMenu.parentTaskId === task.id;
+
+                                return (
+                                  <div
+                                    key={sub.id}
+                                    draggable={!isEditingSubDesc}
+                                    onDragStart={(e) =>
+                                      handleTaskDragStart(e, sub.id, task.id)
+                                    }
+                                    onDragOver={(e) =>
+                                      handleTaskDragOver(e, sub.id)
+                                    }
+                                    onDrop={(e) =>
+                                      handleTaskDrop(e, sub.id, task.id)
+                                    }
+                                    onDragEnd={() => {
+                                      setDraggedTask(null);
+                                      setDragOverTaskId(null);
+                                    }}
+                                    onContextMenu={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      openTaskContextMenuAt(
+                                        sub.id,
+                                        task.id,
+                                        e.clientX,
+                                        e.clientY
+                                      );
+                                    }}
+                                    className={`group/sub flex items-start gap-2 px-2 py-1.5 rounded-lg transition-colors ${
+                                      subDragTarget
+                                        ? 'bg-md-primary-container/35 ring-1 ring-md-primary'
+                                        : subContextOpen
+                                        ? 'bg-md-surface-container/90'
+                                        : 'hover:bg-md-surface-container/50'
+                                    } ${subBeingDragged ? 'opacity-40' : ''}`}
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleToggleTaskComplete(sub, task.id)
+                                      }
+                                      className={`mt-0.5 w-4 h-4 rounded-full flex items-center justify-center shrink-0 transition-all active:scale-90 ${
+                                        subCompleted
+                                          ? 'bg-md-primary text-md-on-primary border border-md-primary'
+                                          : subInProgress
+                                          ? 'border-[1.5px] border-sky-500 text-sky-500 bg-sky-500/10'
+                                          : 'border-[1.5px] border-md-on-surface-variant/50 hover:border-md-primary text-transparent hover:text-md-primary/40'
+                                      }`}
+                                      title={
+                                        subCompleted
+                                          ? 'Marquer non terminée'
+                                          : 'Marquer terminée'
+                                      }
+                                    >
+                                      {subCompleted ? (
+                                        <IconCheck size={9} strokeWidth={2.5} />
+                                      ) : subInProgress ? (
+                                        <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
+                                      ) : (
+                                        <IconCheck size={9} />
+                                      )}
+                                    </button>
+
+                                    <div className="min-w-0 flex-1">
+                                      {sub.text.trim() && (
+                                        <TruncatedTitle
+                                          text={sub.text}
+                                          onDoubleClick={() =>
+                                            openEditTaskModal(sub, task.id)
+                                          }
+                                          className={`text-xs leading-snug cursor-default ${
+                                            subCompleted
+                                              ? 'line-through text-md-on-surface-variant/60'
+                                              : 'text-md-on-surface/95'
+                                          }`}
+                                        />
+                                      )}
+
+                                      {isEditingSubDesc ? (
+                                        <textarea
+                                          autoFocus
+                                          value={inlineEditDesc.value}
+                                          onChange={(e) =>
+                                            setInlineEditDesc((prev) =>
+                                              prev
+                                                ? {
+                                                    ...prev,
+                                                    value: e.target.value,
+                                                  }
+                                                : null
+                                            )
+                                          }
+                                          onBlur={
+                                            handleCommitInlineEditDescription
+                                          }
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Escape') {
+                                              e.preventDefault();
+                                              e.stopPropagation();
+                                              setInlineEditDesc(null);
+                                            } else if (
+                                              e.key === 'Enter' &&
+                                              (e.ctrlKey || e.metaKey)
+                                            ) {
+                                              e.preventDefault();
+                                              handleCommitInlineEditDescription();
+                                            }
+                                          }}
+                                          style={
+                                            {
+                                              '--krono-min-lines': '1.5lh',
+                                              '--krono-max-lines': '8lh',
+                                            } as React.CSSProperties
+                                          }
+                                          className="krono-autogrow-textarea bg-transparent border-none outline-none focus:outline-none p-0 m-0 mt-0.5 text-[10.5px] text-md-on-surface-variant leading-snug"
+                                        />
+                                      ) : (
+                                        sub.description && (
+                                          <p
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleDescriptionClick(sub.id);
+                                            }}
+                                            onDoubleClick={(e) => {
+                                              e.stopPropagation();
+                                              handleStartInlineEditDescription(
+                                                sub,
+                                                task.id
+                                              );
+                                            }}
+                                            title="Cliquer pour plier/déplier • Double-cliquer pour modifier"
+                                            className={`cursor-pointer break-words leading-snug transition-colors ${
+                                              sub.text.trim()
+                                                ? 'text-[10.5px] text-md-on-surface-variant/80 mt-0.5 hover:text-md-on-surface'
+                                                : `text-xs ${
+                                                    subCompleted
+                                                      ? 'line-through text-md-on-surface-variant/60'
+                                                      : 'text-md-on-surface/95'
+                                                  }`
+                                            } ${
+                                              subDescExpanded
+                                                ? 'whitespace-pre-wrap'
+                                                : 'line-clamp-1'
+                                            }`}
+                                          >
+                                            {sub.description}
+                                          </p>
+                                        )
+                                      )}
+
+                                      {(subInProgress ||
+                                        sub.durationMinutes) && (
+                                        <div className="flex items-center gap-2 mt-0.5 text-[10px] text-md-on-surface-variant">
+                                          {subInProgress && (
+                                            <span className="inline-flex items-center gap-1 text-sky-600 dark:text-sky-400 font-medium">
+                                              <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
+                                              <span>En cours</span>
+                                            </span>
+                                          )}
+                                          {sub.durationMinutes && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleStartTimerForTask(
+                                                  sub,
+                                                  task.id
+                                                );
+                                              }}
+                                              className="inline-flex items-center gap-0.5 hover:text-md-primary"
+                                            >
+                                              <IconClock size={10} />
+                                              <span>
+                                                {sub.durationMinutes} min
+                                              </span>
+                                            </button>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const rect =
+                                          e.currentTarget.getBoundingClientRect();
+                                        openTaskContextMenuAt(
+                                          sub.id,
+                                          task.id,
+                                          rect.right - 220,
+                                          rect.bottom + 4
+                                        );
+                                      }}
+                                      className={`w-5 h-5 rounded-full flex items-center justify-center text-md-on-surface-variant hover:text-md-on-surface hover:bg-md-surface-high shrink-0 transition-opacity ${
+                                        subContextOpen
+                                          ? 'opacity-100 bg-md-surface-high text-md-on-surface'
+                                          : 'opacity-0 group-hover/sub:opacity-100 focus:opacity-100'
+                                      }`}
+                                      title="Actions de la sous-tâche"
+                                      aria-label="Actions de la sous-tâche"
+                                    >
+                                      <IconMoreVertical size={13} />
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Petit bouton [+] discret au survol en bas de la tâche pour ajout rapide à la volée */}
+                      {!isQuickAddBelow && todoFilter !== 'completed' && (
+                        <div className="pointer-events-none absolute left-0 right-0 -bottom-2.5 z-10 flex items-center justify-center opacity-0 group-hover/task:opacity-100 focus-within:opacity-100 transition-opacity">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenQuickAddAfterTask(task.id)}
+                            className="pointer-events-auto h-5 px-2 rounded-full bg-md-surface border border-md-outline hover:border-md-primary hover:bg-md-primary-container text-md-on-surface-variant hover:text-md-on-primary-container shadow-sm flex items-center justify-center gap-0.5 text-[10px] font-bold transition-colors"
+                            title="Ajouter une tâche rapide ici"
+                            aria-label="Ajouter une tâche rapide sous cet élément"
+                          >
+                            <IconPlus size={10} />
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Formulaire d'ajout rapide à la volée (titre + description extensible) */}
+                      {isQuickAddBelow && quickAddTask && (
+                        <form
+                          onSubmit={handleSaveQuickAddTask}
+                          className="krono-menu-enter mx-1 my-1.5 px-3 py-2.5 rounded-2xl bg-md-surface-container/80 border border-md-outline space-y-1.5"
+                        >
+                          <input
+                            type="text"
+                            autoFocus
+                            value={quickAddTask.title}
+                            onChange={(e) =>
+                              setQuickAddTask((prev) =>
+                                prev ? { ...prev, title: e.target.value } : null
+                              )
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === 'Escape') {
+                                e.preventDefault();
+                                setQuickAddTask(null);
+                              }
+                            }}
+                            placeholder="Titre de la tâche..."
+                            className="w-full bg-transparent border-none focus:outline-none text-xs font-semibold text-md-on-surface placeholder:text-md-on-surface-variant/55"
+                          />
+                          <textarea
+                            value={quickAddTask.description}
+                            onChange={(e) =>
+                              setQuickAddTask((prev) =>
+                                prev
+                                  ? { ...prev, description: e.target.value }
+                                  : null
+                              )
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === 'Escape') {
+                                e.preventDefault();
+                                setQuickAddTask(null);
+                              } else if (
+                                e.key === 'Enter' &&
+                                (e.ctrlKey || e.metaKey)
+                              ) {
+                                e.preventDefault();
+                                handleSaveQuickAddTask();
+                              }
+                            }}
+                            placeholder="Description (optionnelle)..."
+                            style={
+                              {
+                                '--krono-min-lines': '1.6lh',
+                                '--krono-max-lines': '8lh',
+                              } as React.CSSProperties
+                            }
+                            className="krono-autogrow-textarea bg-transparent border-none focus:outline-none text-[11px] text-md-on-surface-variant placeholder:text-md-on-surface-variant/45 leading-snug"
+                          />
+                          <div className="flex items-center justify-end gap-1.5 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => setQuickAddTask(null)}
+                              className="px-2.5 py-1 rounded-full text-[11px] font-medium text-md-on-surface-variant hover:text-md-on-surface"
+                            >
+                              Annuler
+                            </button>
+                            <button
+                              type="submit"
+                              disabled={
+                                !quickAddTask.title.trim() &&
+                                !quickAddTask.description.trim()
+                              }
+                              className="px-3 py-1 rounded-full bg-md-primary text-md-on-primary text-[11px] font-bold disabled:opacity-40 transition-opacity"
+                            >
+                              Ajouter
+                            </button>
+                          </div>
+                        </form>
+                      )}
                     </div>
                   );
                 })
               )}
             </section>
           </main>
+
+          {/* Menu contextuel flottant regroupant les actions liées à une tâche */}
+          {taskContextMenu && activeContextMenuTarget && (
+            <div
+              ref={taskContextMenuRef}
+              style={{
+                left: `${taskContextMenu.x}px`,
+                top: `${taskContextMenu.y}px`,
+              }}
+              className="krono-menu-enter fixed z-50 w-56 rounded-2xl bg-md-surface-container border border-md-outline shadow-2xl py-1.5 text-xs"
+            >
+              {/* Sélecteur rapide de statut */}
+              <div className="px-2.5 py-1.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-md-on-surface-variant mb-1">
+                  Statut
+                </p>
+                <div className="grid grid-cols-3 gap-1">
+                  {(
+                    ['not_started', 'in_progress', 'completed'] as TodoStatus[]
+                  ).map((st) => {
+                    const active =
+                      getTaskStatus(activeContextMenuTarget.task) === st;
+                    return (
+                      <button
+                        key={st}
+                        type="button"
+                        onClick={() => {
+                          handleSetTaskStatus(
+                            activeContextMenuTarget.task.id,
+                            st,
+                            activeContextMenuTarget.parentTaskId
+                          );
+                          setTaskContextMenu(null);
+                        }}
+                        className={`px-1.5 py-1 rounded-lg text-[10px] font-semibold truncate transition-colors ${
+                          active
+                            ? 'bg-md-primary text-md-on-primary'
+                            : 'bg-md-surface text-md-on-surface-variant hover:text-md-on-surface hover:bg-md-surface-high'
+                        }`}
+                      >
+                        {st === 'not_started'
+                          ? 'À faire'
+                          : st === 'in_progress'
+                          ? 'En cours'
+                          : 'Terminé'}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Sélecteur rapide de priorité */}
+              <div className="px-2.5 pb-1.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-md-on-surface-variant mb-1">
+                  Priorité
+                </p>
+                <div className="grid grid-cols-3 gap-1">
+                  {(['low', 'medium', 'high'] as Priority[]).map((prio) => {
+                    const active =
+                      activeContextMenuTarget.task.priority === prio;
+                    return (
+                      <button
+                        key={prio}
+                        type="button"
+                        onClick={() => {
+                          handleSetTaskPriority(
+                            activeContextMenuTarget.task.id,
+                            prio,
+                            activeContextMenuTarget.parentTaskId
+                          );
+                          setTaskContextMenu(null);
+                        }}
+                        className={`px-1.5 py-1 rounded-lg text-[10px] font-semibold transition-colors ${
+                          active
+                            ? 'bg-md-primary-container text-md-on-primary-container'
+                            : 'bg-md-surface text-md-on-surface-variant hover:text-md-on-surface hover:bg-md-surface-high'
+                        }`}
+                      >
+                        {PRIORITY_STYLES[prio].label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="h-px bg-md-outline my-1" />
+
+              <button
+                type="button"
+                onClick={() => {
+                  openEditTaskModal(
+                    activeContextMenuTarget.task,
+                    activeContextMenuTarget.parentTaskId
+                  );
+                  setTaskContextMenu(null);
+                }}
+                className="w-full px-3 py-2 text-left flex items-center gap-2.5 text-md-on-surface hover:bg-md-surface-high transition-colors"
+              >
+                <IconEdit size={13} className="text-md-on-surface-variant" />
+                <span>Modifier</span>
+              </button>
+
+              {!activeContextMenuTarget.parentTaskId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    openCreateTaskModal({
+                      parentTaskId: activeContextMenuTarget.task.id,
+                    });
+                    setTaskContextMenu(null);
+                  }}
+                  className="w-full px-3 py-2 text-left flex items-center gap-2.5 text-md-on-surface hover:bg-md-surface-high transition-colors"
+                >
+                  <IconPlus size={13} className="text-md-primary" />
+                  <span>Ajouter une sous-tâche</span>
+                </button>
+              )}
+
+              {!activeContextMenuTarget.parentTaskId &&
+                activeContextMenuTarget.task.children &&
+                activeContextMenuTarget.task.children.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleToggleCollapseSubtasks(
+                        activeContextMenuTarget.task.id
+                      );
+                      setTaskContextMenu(null);
+                    }}
+                    className="w-full px-3 py-2 text-left flex items-center gap-2.5 text-md-on-surface hover:bg-md-surface-high transition-colors"
+                  >
+                    {activeContextMenuTarget.task.collapsed ? (
+                      <IconChevronDown
+                        size={13}
+                        className="text-md-on-surface-variant"
+                      />
+                    ) : (
+                      <IconChevronRight
+                        size={13}
+                        className="text-md-on-surface-variant"
+                      />
+                    )}
+                    <span>
+                      {activeContextMenuTarget.task.collapsed
+                        ? 'Déplier les sous-tâches'
+                        : 'Réduire les sous-tâches'}
+                    </span>
+                  </button>
+                )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  handleStartTimerForTask(
+                    activeContextMenuTarget.task,
+                    activeContextMenuTarget.parentTaskId
+                  );
+                  setTaskContextMenu(null);
+                }}
+                className="w-full px-3 py-2 text-left flex items-center gap-2.5 text-md-on-surface hover:bg-md-surface-high transition-colors"
+              >
+                <IconTimer size={13} className="text-md-primary" />
+                <span>
+                  Lancer un minuteur (
+                  {activeContextMenuTarget.task.durationMinutes || 25} min)
+                </span>
+              </button>
+
+              {activeContextMenuTarget.parentTaskId ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handlePromoteSubtask(
+                      activeContextMenuTarget.parentTaskId!,
+                      activeContextMenuTarget.task.id
+                    );
+                    setTaskContextMenu(null);
+                  }}
+                  className="w-full px-3 py-2 text-left flex items-center gap-2.5 text-md-on-surface hover:bg-md-surface-high transition-colors"
+                >
+                  <IconOutdent
+                    size={13}
+                    className="text-md-on-surface-variant"
+                  />
+                  <span>Promouvoir en tâche principale</span>
+                </button>
+              ) : (
+                activeContextMenuTarget.previousParent && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleNestTaskUnderParent(
+                        activeContextMenuTarget.task.id,
+                        activeContextMenuTarget.previousParent!.id
+                      );
+                      setTaskContextMenu(null);
+                    }}
+                    className="w-full px-3 py-2 text-left flex items-center gap-2.5 text-md-on-surface hover:bg-md-surface-high transition-colors"
+                  >
+                    <IconIndent
+                      size={13}
+                      className="text-md-on-surface-variant"
+                    />
+                    <span className="truncate">
+                      Mettre en sous-tâche
+                    </span>
+                  </button>
+                )
+              )}
+
+              {customKanbanBoards.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleSendTaskToKanban(activeContextMenuTarget.task);
+                    setTaskContextMenu(null);
+                  }}
+                  className="w-full px-3 py-2 text-left flex items-center gap-2.5 text-md-on-surface hover:bg-md-surface-high transition-colors"
+                >
+                  <IconArrowRight
+                    size={13}
+                    className="text-md-on-surface-variant"
+                  />
+                  <span>Copier vers un autre Kanban</span>
+                </button>
+              )}
+
+              <div className="h-px bg-md-outline my-1" />
+
+              <button
+                type="button"
+                onClick={() => {
+                  handleDeleteTask(
+                    activeContextMenuTarget.task.id,
+                    activeContextMenuTarget.parentTaskId
+                  );
+                  setTaskContextMenu(null);
+                }}
+                className="w-full px-3 py-2 text-left flex items-center gap-2.5 text-rose-500 hover:bg-rose-500/10 transition-colors"
+              >
+                <IconTrash size={13} />
+                <span>Supprimer</span>
+              </button>
+            </div>
+          )}
 
           <footer className="fixed bottom-0 left-0 right-0 z-30 bg-md-surface-container border-t border-md-outline">
             {primaryActiveTimer && (
@@ -1994,8 +3383,11 @@ export const SidePanelApp: React.FC = () => {
               key={currentNote.id}
               noteId={currentNote.id}
               initialHtml={currentNote.content}
+              fontSize={noteFontSize}
               editorRef={editorRef}
               onChangeHtml={(html) => handleUpdateCurrentNote({ content: html })}
+              onChangeFontSize={setNoteFontSize}
+              onTriggerTimerTag={handleStartTimerFromNote}
             />
           </main>
 
@@ -2003,7 +3395,10 @@ export const SidePanelApp: React.FC = () => {
           <footer className="fixed bottom-0 left-0 right-0 z-30 bg-md-surface-container border-t border-md-outline">
             {/* Popover Couleur du texte sélectionné */}
             {showTextColorMenu && (
-              <div className="px-3 py-2 border-b border-md-outline bg-md-surface flex items-center justify-between gap-2">
+              <div
+                ref={textColorMenuRef}
+                className="krono-menu-enter px-3 py-2 border-b border-md-outline bg-md-surface flex items-center justify-between gap-2"
+              >
                 <span className="text-[11px] font-semibold text-md-on-surface-variant">
                   Couleur du texte :
                 </span>
@@ -2028,7 +3423,10 @@ export const SidePanelApp: React.FC = () => {
 
             {/* Popover Couleur de surlignage (marqueur) */}
             {showHighlightMenu && (
-              <div className="px-3 py-2 border-b border-md-outline bg-md-surface flex items-center justify-between gap-2">
+              <div
+                ref={highlightMenuRef}
+                className="krono-menu-enter px-3 py-2 border-b border-md-outline bg-md-surface flex items-center justify-between gap-2"
+              >
                 <span className="text-[11px] font-semibold text-md-on-surface-variant">
                   Surligneur (marqueur) :
                 </span>
@@ -2056,176 +3454,52 @@ export const SidePanelApp: React.FC = () => {
               </div>
             )}
 
-            {/* Ligne 1 : Outils de formatage riche + Couleur texte + Surligneur + Clear Formatting */}
-            <div className="px-2.5 py-1.5 border-b border-md-outline flex items-center justify-between gap-1 overflow-x-auto">
-              <div className="flex items-center gap-0.5 shrink-0">
-                <button
-                  type="button"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    handleExecFormat('bold');
-                  }}
-                  className="w-7 h-7 rounded-lg hover:bg-md-surface-high flex items-center justify-center text-md-on-surface"
-                  title="Gras (Ctrl+B)"
-                >
-                  <IconBold size={14} />
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    handleExecFormat('italic');
-                  }}
-                  className="w-7 h-7 rounded-lg hover:bg-md-surface-high flex items-center justify-center text-md-on-surface"
-                  title="Italique (Ctrl+I)"
-                >
-                  <IconItalic size={14} />
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    handleExecFormat('underline');
-                  }}
-                  className="w-7 h-7 rounded-lg hover:bg-md-surface-high flex items-center justify-center text-md-on-surface"
-                  title="Souligné (Ctrl+U)"
-                >
-                  <IconUnderline size={14} />
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    handleExecFormat('strikeThrough');
-                  }}
-                  className="w-7 h-7 rounded-lg hover:bg-md-surface-high flex items-center justify-center text-md-on-surface"
-                  title="Barré"
-                >
-                  <IconStrikethrough size={14} />
-                </button>
-
-                <div className="h-4 w-px bg-md-outline mx-0.5" />
-
-                <button
-                  type="button"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    handleExecFormat('formatBlock', 'H1');
-                  }}
-                  className="px-1.5 h-7 rounded-lg hover:bg-md-surface-high text-[11px] font-bold text-md-on-surface"
-                  title="Titre 1 (H1)"
-                >
-                  H1
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    handleExecFormat('formatBlock', 'H2');
-                  }}
-                  className="px-1.5 h-7 rounded-lg hover:bg-md-surface-high text-[11px] font-bold text-md-on-surface"
-                  title="Titre 2 (H2)"
-                >
-                  H2
-                </button>
-
-                <div className="h-4 w-px bg-md-outline mx-0.5" />
-
-                <button
-                  type="button"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    handleExecFormat('insertUnorderedList');
-                  }}
-                  className="w-7 h-7 rounded-lg hover:bg-md-surface-high flex items-center justify-center text-md-on-surface"
-                  title="Liste à puces"
-                >
-                  <IconListBullet size={14} />
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    handleExecFormat('insertOrderedList');
-                  }}
-                  className="w-7 h-7 rounded-lg hover:bg-md-surface-high flex items-center justify-center text-md-on-surface"
-                  title="Liste numérotée"
-                >
-                  <IconListOrdered size={14} />
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    handleExecFormat('formatBlock', 'BLOCKQUOTE');
-                  }}
-                  className="w-7 h-7 rounded-lg hover:bg-md-surface-high flex items-center justify-center text-md-on-surface"
-                  title="Citation"
-                >
-                  <IconQuote size={13} />
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    handleExecFormat('insertHorizontalRule');
-                  }}
-                  className="w-7 h-7 rounded-lg hover:bg-md-surface-high flex items-center justify-center text-md-on-surface"
-                  title="Ligne séparatrice"
-                >
-                  <IconMinus size={13} />
-                </button>
-              </div>
-
-              {/* Droite : Couleur du texte + Surligneur + Annuler la mise en forme */}
-              <div className="flex items-center gap-0.5 shrink-0">
-                <button
-                  type="button"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    setShowTextColorMenu((prev) => !prev);
-                    setShowHighlightMenu(false);
-                  }}
-                  className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${
-                    showTextColorMenu
-                      ? 'bg-md-primary text-md-on-primary'
-                      : 'hover:bg-md-surface-high text-md-on-surface'
-                  }`}
-                  title="Couleur du texte sélectionné"
-                >
-                  <IconTextColor size={14} />
-                </button>
-
-                <button
-                  type="button"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    setShowHighlightMenu((prev) => !prev);
-                    setShowTextColorMenu(false);
-                  }}
-                  className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${
-                    showHighlightMenu
-                      ? 'bg-md-primary text-md-on-primary'
-                      : 'hover:bg-md-surface-high text-md-on-surface'
-                  }`}
-                  title="Couleur de surlignage (marqueur)"
-                >
-                  <IconHighlighter size={14} />
-                </button>
-
-                <button
-                  type="button"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    handleClearFormatting();
-                  }}
-                  className="w-7 h-7 rounded-lg hover:bg-md-surface-high flex items-center justify-center text-md-on-surface-variant hover:text-rose-500"
-                  title="Annuler la mise en forme (Clear formatting)"
-                >
-                  <IconClearFormat size={14} />
-                </button>
-              </div>
-            </div>
+            {/* Ligne 1 : Barre de formatage responsive avec menu de débordement automatique */}
+            <NotesFormatToolbar
+              noteFontSize={noteFontSize}
+              showTextColorMenu={showTextColorMenu}
+              showHighlightMenu={showHighlightMenu}
+              textColorButtonRef={textColorButtonRef}
+              highlightButtonRef={highlightButtonRef}
+              onExecFormat={handleExecFormat}
+              onInsertCheckbox={() => {
+                insertChecklistAtSelection(editorRef.current, 'classic');
+                if (editorRef.current) {
+                  handleUpdateCurrentNote({
+                    content: editorRef.current.innerHTML,
+                  });
+                }
+              }}
+              onInsertTriStateCheckbox={() => {
+                insertChecklistAtSelection(editorRef.current, 'tristate');
+                if (editorRef.current) {
+                  handleUpdateCurrentNote({
+                    content: editorRef.current.innerHTML,
+                  });
+                }
+              }}
+              onInsertInlineTimerDraft={() => {
+                insertInlineTimerDraftAtSelection(editorRef.current);
+                if (editorRef.current) {
+                  handleUpdateCurrentNote({
+                    content: editorRef.current.innerHTML,
+                  });
+                }
+                showToast(
+                  'Saisissez la durée puis « ] » pour valider le timer (ex: [timer:25] ou [timer:05:30]).'
+                );
+              }}
+              onResetFontSize={() => setNoteFontSize(13)}
+              onToggleTextColorMenu={() => {
+                setShowTextColorMenu((prev) => !prev);
+                setShowHighlightMenu(false);
+              }}
+              onToggleHighlightMenu={() => {
+                setShowHighlightMenu((prev) => !prev);
+                setShowTextColorMenu(false);
+              }}
+              onClearFormatting={handleClearFormatting}
+            />
 
             {/* Ligne 2 : Barre d'actions inférieure */}
             <div className="px-3 py-2 flex items-center justify-between gap-1.5">
@@ -2292,778 +3566,798 @@ export const SidePanelApp: React.FC = () => {
       )}
 
       {/* ====================================================================
-          MODALE 1 : CRÉATION D'UN MINUTEUR (Sans bordure, Esc, Format hh:mm:ss)
+          MODALE 1 : CRÉATION D'UN MINUTEUR (Animée, native <dialog>, hh:mm:ss)
           ==================================================================== */}
-      {isTimerModalOpen && (
-        <div
-          onClick={() => setIsTimerModalOpen(false)}
-          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm rounded-3xl bg-md-surface-container p-5 space-y-4 shadow-2xl"
-          >
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-bold text-md-on-surface flex items-center gap-2">
-                <IconTimer size={16} className="text-md-primary" />
-                <span>Nouveau Minuteur</span>
-              </h2>
-              <button
-                type="button"
-                onClick={() => setIsTimerModalOpen(false)}
-                className="w-7 h-7 rounded-full bg-md-surface text-md-on-surface-variant hover:text-md-on-surface flex items-center justify-center"
-              >
-                <IconClose size={14} />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateTimerFromModal} className="space-y-3.5">
-              <div className="space-y-1">
-                <label className="text-[11px] font-semibold text-md-on-surface-variant">
-                  Titre du minuteur
-                </label>
-                <input
-                  type="text"
-                  autoFocus
-                  value={newTimerLabel}
-                  onChange={(e) => setNewTimerLabel(e.target.value)}
-                  placeholder="Ex: Session Deep Work, Pomodoro..."
-                  className="w-full bg-md-surface border border-md-outline focus:border-md-primary focus:outline-none rounded-2xl px-3.5 py-2 text-xs text-md-on-surface"
-                />
-              </div>
-
-              {/* Préréglages rapides : 10, 20, 30, 45, 60 min */}
-              <div className="space-y-1">
-                <label className="text-[11px] font-semibold text-md-on-surface-variant">
-                  Durées rapides
-                </label>
-                <div className="grid grid-cols-5 gap-1.5">
-                  {PRESET_DURATIONS.map((mins) => {
-                    const totalCurrentSec =
-                      (parseInt(timerHours, 10) || 0) * 3600 +
-                      (parseInt(timerMinutes, 10) || 0) * 60 +
-                      (parseInt(timerSeconds, 10) || 0);
-                    const isSelected = totalCurrentSec === mins * 60;
-                    return (
-                      <button
-                        key={mins}
-                        type="button"
-                        onClick={() => applyTimerPresetMinutes(mins)}
-                        className={`py-1.5 rounded-2xl text-xs font-bold border transition-colors ${
-                          isSelected
-                            ? 'bg-md-primary text-md-on-primary border-md-primary'
-                            : 'bg-md-surface text-md-on-surface border-md-outline hover:bg-md-surface-high'
-                        }`}
-                      >
-                        {mins}m
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Saisie au format hh:mm:ss */}
-              <div className="space-y-1">
-                <label className="text-[11px] font-semibold text-md-on-surface-variant">
-                  Durée personnalisée (hh : mm : ss)
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="bg-md-surface border border-md-outline rounded-2xl px-3 py-1.5 flex flex-col items-center">
-                    <span className="text-[9px] uppercase font-bold text-md-on-surface-variant">
-                      Heures (hh)
-                    </span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={99}
-                      value={timerHours}
-                      onChange={(e) => setTimerHours(e.target.value)}
-                      className="w-full bg-transparent text-center font-mono text-sm font-bold text-md-on-surface focus:outline-none"
-                    />
-                  </div>
-                  <div className="bg-md-surface border border-md-outline rounded-2xl px-3 py-1.5 flex flex-col items-center">
-                    <span className="text-[9px] uppercase font-bold text-md-on-surface-variant">
-                      Minutes (mm)
-                    </span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={59}
-                      value={timerMinutes}
-                      onChange={(e) => setTimerMinutes(e.target.value)}
-                      className="w-full bg-transparent text-center font-mono text-sm font-bold text-md-on-surface focus:outline-none"
-                    />
-                  </div>
-                  <div className="bg-md-surface border border-md-outline rounded-2xl px-3 py-1.5 flex flex-col items-center">
-                    <span className="text-[9px] uppercase font-bold text-md-on-surface-variant">
-                      Secondes (ss)
-                    </span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={59}
-                      value={timerSeconds}
-                      onChange={(e) => setTimerSeconds(e.target.value)}
-                      className="w-full bg-transparent text-center font-mono text-sm font-bold text-md-on-surface focus:outline-none"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Alarme répétitive */}
-              <label className="flex items-center justify-between p-2.5 rounded-2xl bg-md-surface border border-md-outline cursor-pointer">
-                <div className="flex items-center gap-2">
-                  <IconRepeat size={15} className="text-md-primary" />
-                  <div>
-                    <p className="text-xs font-semibold text-md-on-surface">
-                      Alarme répétitive en boucle
-                    </p>
-                    <p className="text-[10px] text-md-on-surface-variant">
-                      Sonne jusqu'au clic sur « OK, d'accord »
-                    </p>
-                  </div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={newTimerRepeat}
-                  onChange={(e) => setNewTimerRepeat(e.target.checked)}
-                  className="h-4 w-4 rounded border-md-outline text-md-primary cursor-pointer"
-                />
-              </label>
-
-              {/* Choix de la sonnerie */}
-              <div className="space-y-1">
-                <label className="text-[11px] font-semibold text-md-on-surface-variant">
-                  Sonnerie de fin
-                </label>
-                <div className="space-y-1.5 max-h-28 overflow-y-auto pr-1">
-                  {TIMER_SOUNDS.map((sound) => {
-                    const active = newTimerSound === sound.id;
-                    return (
-                      <div
-                        key={sound.id}
-                        onClick={() => setNewTimerSound(sound.id)}
-                        className={`flex items-center justify-between px-3 py-2 rounded-2xl border cursor-pointer transition-colors ${
-                          active
-                            ? 'bg-md-primary-container text-md-on-primary-container border-md-primary'
-                            : 'bg-md-surface text-md-on-surface border-md-outline hover:bg-md-surface-high'
-                        }`}
-                      >
-                        <div className="min-w-0">
-                          <p className="text-xs font-semibold truncate">
-                            {sound.label}
-                          </p>
-                          <p className="text-[10px] opacity-75 truncate">
-                            {sound.description}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setNewTimerSound(sound.id);
-                            playTimerSound(sound.id);
-                          }}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-md-surface-container text-md-on-surface text-[11px] font-semibold hover:opacity-90 shrink-0"
-                        >
-                          <IconVolume size={12} />
-                          <span>Écouter</span>
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={() => setIsTimerModalOpen(false)}
-                  className="px-4 py-2 rounded-full bg-md-surface text-md-on-surface-variant text-xs font-semibold"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 rounded-full bg-md-primary text-md-on-primary text-xs font-bold"
-                >
-                  Créer le minuteur
-                </button>
-              </div>
-            </form>
+      <Modal
+        open={isTimerModalOpen}
+        onClose={() => setIsTimerModalOpen(false)}
+        className="max-w-sm"
+        ariaLabelledBy="timer-modal-title"
+      >
+        <div className="w-full rounded-3xl bg-md-surface-container p-5 space-y-4 shadow-2xl">
+          <div className="flex items-center justify-between">
+            <h2
+              id="timer-modal-title"
+              className="text-sm font-bold text-md-on-surface flex items-center gap-2"
+            >
+              <IconTimer size={16} className="text-md-primary" />
+              <span>Nouveau Minuteur</span>
+            </h2>
+            <button
+              type="button"
+              onClick={() => setIsTimerModalOpen(false)}
+              aria-label="Fermer"
+              className="w-7 h-7 rounded-full bg-md-surface text-md-on-surface-variant hover:text-md-on-surface flex items-center justify-center"
+            >
+              <IconClose size={14} />
+            </button>
           </div>
-        </div>
-      )}
 
-      {/* ====================================================================
-          MODALE 2 : CRÉATION / MODIFICATION D'UNE TÂCHE TODO (Sans bordure, Esc)
-          ==================================================================== */}
-      {isTaskModalOpen && (
-        <div
-          onClick={() => setIsTaskModalOpen(false)}
-          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm rounded-3xl bg-md-surface-container p-5 space-y-3.5 shadow-2xl max-h-[90vh] overflow-y-auto"
-          >
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-bold text-md-on-surface flex items-center gap-2">
-                <IconCheckCircle size={16} className="text-md-primary" />
-                <span>
-                  {editingTaskId
-                    ? 'Modifier la tâche'
-                    : taskIndentLevel > 0
-                    ? 'Nouvelle sous-tâche'
-                    : `Nouvelle tâche (${currentTodoList.title})`}
-                </span>
-              </h2>
-              <button
-                type="button"
-                onClick={() => setIsTaskModalOpen(false)}
-                className="w-7 h-7 rounded-full bg-md-surface text-md-on-surface-variant hover:text-md-on-surface flex items-center justify-center"
-              >
-                <IconClose size={14} />
-              </button>
+          <form onSubmit={handleCreateTimerFromModal} className="space-y-3.5">
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold text-md-on-surface-variant">
+                Titre du minuteur
+              </label>
+              <input
+                type="text"
+                autoFocus
+                value={newTimerLabel}
+                onChange={(e) => setNewTimerLabel(e.target.value)}
+                placeholder="Ex: Session Deep Work, Pomodoro..."
+                className="w-full bg-md-surface border border-md-outline focus:border-md-primary focus:outline-none rounded-2xl px-3.5 py-2 text-xs text-md-on-surface"
+              />
             </div>
 
-            <form onSubmit={handleSaveTaskFromModal} className="space-y-3">
-              <div className="space-y-1">
-                <label className="text-[11px] font-semibold text-md-on-surface-variant">
-                  Titre
-                </label>
-                <input
-                  type="text"
-                  autoFocus
-                  value={taskTitle}
-                  onChange={(e) => setTaskTitle(e.target.value)}
-                  placeholder="Ex: Préparer la présentation..."
-                  className="w-full bg-md-surface border border-md-outline focus:border-md-primary focus:outline-none rounded-2xl px-3.5 py-2 text-xs text-md-on-surface"
-                />
+            {/* Préréglages rapides : 10, 20, 30, 45, 60 min */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold text-md-on-surface-variant">
+                Durées rapides
+              </label>
+              <div className="grid grid-cols-5 gap-1.5">
+                {PRESET_DURATIONS.map((mins) => {
+                  const totalCurrentSec =
+                    (parseInt(timerHours, 10) || 0) * 3600 +
+                    (parseInt(timerMinutes, 10) || 0) * 60 +
+                    (parseInt(timerSeconds, 10) || 0);
+                  const isSelected = totalCurrentSec === mins * 60;
+                  return (
+                    <button
+                      key={mins}
+                      type="button"
+                      onClick={() => applyTimerPresetMinutes(mins)}
+                      className={`py-1.5 rounded-2xl text-xs font-bold border transition-colors ${
+                        isSelected
+                          ? 'bg-md-primary text-md-on-primary border-md-primary'
+                          : 'bg-md-surface text-md-on-surface border-md-outline hover:bg-md-surface-high'
+                      }`}
+                    >
+                      {mins}m
+                    </button>
+                  );
+                })}
               </div>
+            </div>
 
-              <div className="space-y-1">
-                <label className="text-[11px] font-semibold text-md-on-surface-variant">
-                  Description
-                </label>
-                <textarea
-                  rows={2}
-                  value={taskDescription}
-                  onChange={(e) => setTaskDescription(e.target.value)}
-                  placeholder="Détails, notes ou contexte..."
-                  className="w-full bg-md-surface border border-md-outline focus:border-md-primary focus:outline-none rounded-2xl px-3.5 py-2 text-xs text-md-on-surface resize-none"
-                />
-              </div>
-
-              {/* Durée de la tâche */}
-              <div className="space-y-1">
-                <label className="text-[11px] font-semibold text-md-on-surface-variant">
-                  Durée prévue (en minutes)
-                </label>
-                <div className="flex items-center gap-1.5">
-                  <div className="grid grid-cols-6 gap-1 flex-1">
-                    {TASK_DURATION_PRESETS.map((mins) => (
-                      <button
-                        key={mins}
-                        type="button"
-                        onClick={() => setTaskDurationMinutes(String(mins))}
-                        className={`py-1.5 rounded-xl text-[10px] font-bold border transition-colors ${
-                          Number(taskDurationMinutes) === mins
-                            ? 'bg-md-primary text-md-on-primary border-md-primary'
-                            : 'bg-md-surface text-md-on-surface border-md-outline'
-                        }`}
-                      >
-                        {mins}m
-                      </button>
-                    ))}
-                  </div>
+            {/* Saisie au format hh:mm:ss */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold text-md-on-surface-variant">
+                Durée personnalisée (hh : mm : ss)
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="bg-md-surface border border-md-outline rounded-2xl px-3 py-1.5 flex flex-col items-center">
+                  <span className="text-[9px] uppercase font-bold text-md-on-surface-variant">
+                    Heures (hh)
+                  </span>
                   <input
                     type="number"
-                    min={1}
-                    max={999}
-                    value={taskDurationMinutes}
-                    onChange={(e) => setTaskDurationMinutes(e.target.value)}
-                    placeholder="min"
-                    className="w-16 bg-md-surface border border-md-outline focus:border-md-primary rounded-xl px-2 py-1.5 text-xs text-center font-mono text-md-on-surface focus:outline-none"
+                    min={0}
+                    max={99}
+                    value={timerHours}
+                    onChange={(e) => setTimerHours(e.target.value)}
+                    className="w-full bg-transparent text-center font-mono text-sm font-bold text-md-on-surface focus:outline-none"
+                  />
+                </div>
+                <div className="bg-md-surface border border-md-outline rounded-2xl px-3 py-1.5 flex flex-col items-center">
+                  <span className="text-[9px] uppercase font-bold text-md-on-surface-variant">
+                    Minutes (mm)
+                  </span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={59}
+                    value={timerMinutes}
+                    onChange={(e) => setTimerMinutes(e.target.value)}
+                    className="w-full bg-transparent text-center font-mono text-sm font-bold text-md-on-surface focus:outline-none"
+                  />
+                </div>
+                <div className="bg-md-surface border border-md-outline rounded-2xl px-3 py-1.5 flex flex-col items-center">
+                  <span className="text-[9px] uppercase font-bold text-md-on-surface-variant">
+                    Secondes (ss)
+                  </span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={59}
+                    value={timerSeconds}
+                    onChange={(e) => setTimerSeconds(e.target.value)}
+                    className="w-full bg-transparent text-center font-mono text-sm font-bold text-md-on-surface focus:outline-none"
                   />
                 </div>
               </div>
-
-              {/* Niveau : Tâche principale ou Sous-tâche */}
-              <div className="flex items-center justify-between p-2.5 rounded-2xl bg-md-surface border border-md-outline">
-                <span className="text-xs font-semibold text-md-on-surface">
-                  Type d'élément
-                </span>
-                <div className="inline-flex rounded-full bg-md-surface-container p-0.5">
-                  <button
-                    type="button"
-                    onClick={() => setTaskIndentLevel(0)}
-                    className={`px-2.5 py-1 rounded-full text-[11px] font-semibold ${
-                      taskIndentLevel === 0
-                        ? 'bg-md-primary text-md-on-primary'
-                        : 'text-md-on-surface-variant'
-                    }`}
-                  >
-                    Tâche principale
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTaskIndentLevel(1)}
-                    className={`px-2.5 py-1 rounded-full text-[11px] font-semibold ${
-                      taskIndentLevel > 0
-                        ? 'bg-md-primary text-md-on-primary'
-                        : 'text-md-on-surface-variant'
-                    }`}
-                  >
-                    Sous-tâche
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[11px] font-semibold text-md-on-surface-variant">
-                  Statut
-                </label>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {(
-                    ['not_started', 'in_progress', 'completed'] as TodoStatus[]
-                  ).map((st) => {
-                    const meta = STATUS_META[st];
-                    const selected = taskStatus === st;
-                    return (
-                      <button
-                        key={st}
-                        type="button"
-                        onClick={() => setTaskStatus(st)}
-                        className={`py-2 px-2 rounded-2xl text-[11px] font-semibold border flex items-center justify-center gap-1 transition-all ${
-                          selected
-                            ? meta.badge + ' ring-2 ring-md-primary/40'
-                            : 'bg-md-surface text-md-on-surface-variant border-md-outline'
-                        }`}
-                      >
-                        {meta.renderIcon(11)}
-                        <span className="truncate">{meta.shortLabel}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[11px] font-semibold text-md-on-surface-variant">
-                  Priorité
-                </label>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {(['low', 'medium', 'high'] as Priority[]).map((prio) => {
-                    const meta = PRIORITY_STYLES[prio];
-                    const selected = taskPriority === prio;
-                    return (
-                      <button
-                        key={prio}
-                        type="button"
-                        onClick={() => setTaskPriority(prio)}
-                        className={`py-2 px-2 rounded-2xl text-[11px] font-semibold border flex items-center justify-center gap-1 transition-all ${
-                          selected
-                            ? meta.badge + ' ring-2 ring-md-primary/40'
-                            : 'bg-md-surface text-md-on-surface-variant border-md-outline'
-                        }`}
-                      >
-                        {meta.renderIcon(11)}
-                        <span>{meta.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsTaskModalOpen(false)}
-                  className="px-4 py-2 rounded-full bg-md-surface text-md-on-surface-variant text-xs font-semibold"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 rounded-full bg-md-primary text-md-on-primary text-xs font-bold"
-                >
-                  {editingTaskId ? 'Enregistrer' : 'Ajouter'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ====================================================================
-          MODALE 3 : GESTION DES LISTES DE TÂCHES (Sans bordure, Esc)
-          ==================================================================== */}
-      {isTodoListModalOpen && (
-        <div
-          onClick={() => setIsTodoListModalOpen(false)}
-          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm rounded-3xl bg-md-surface-container p-5 space-y-4 shadow-2xl"
-          >
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-bold text-md-on-surface flex items-center gap-2">
-                <IconFolder size={16} className="text-md-primary" />
-                <span>Listes de tâches</span>
-              </h2>
-              <button
-                type="button"
-                onClick={() => setIsTodoListModalOpen(false)}
-                className="w-7 h-7 rounded-full bg-md-surface text-md-on-surface-variant hover:text-md-on-surface flex items-center justify-center"
-              >
-                <IconClose size={14} />
-              </button>
             </div>
 
-            <form onSubmit={handleCreateTodoList} className="space-y-2">
-              <label className="text-[11px] font-semibold text-md-on-surface-variant">
-                Créer une nouvelle liste
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  autoFocus
-                  value={newListName}
-                  onChange={(e) => setNewListName(e.target.value)}
-                  placeholder="Ex: Sprint, Courses, Idées..."
-                  className="flex-1 bg-md-surface border border-md-outline focus:border-md-primary focus:outline-none rounded-full px-3.5 py-2 text-xs text-md-on-surface"
-                />
-                <button
-                  type="submit"
-                  className="px-4 py-2 rounded-full bg-md-primary text-md-on-primary text-xs font-bold"
-                >
-                  Créer
-                </button>
+            {/* Alarme répétitive */}
+            <label className="flex items-center justify-between p-2.5 rounded-2xl bg-md-surface border border-md-outline cursor-pointer">
+              <div className="flex items-center gap-2">
+                <IconRepeat size={15} className="text-md-primary" />
+                <div>
+                  <p className="text-xs font-semibold text-md-on-surface">
+                    Alarme répétitive en boucle
+                  </p>
+                  <p className="text-[10px] text-md-on-surface-variant">
+                    Sonne jusqu'au clic sur « OK, d'accord »
+                  </p>
+                </div>
               </div>
-            </form>
+              <input
+                type="checkbox"
+                checked={newTimerRepeat}
+                onChange={(e) => setNewTimerRepeat(e.target.checked)}
+                className="h-4 w-4 rounded border-md-outline text-md-primary cursor-pointer"
+              />
+            </label>
 
-            <div className="space-y-1.5 max-h-48 overflow-y-auto pt-2 border-t border-md-outline">
-              <p className="text-[11px] font-semibold text-md-on-surface-variant">
-                Vos listes existantes
-              </p>
-              {todoLists.map((list) => {
-                const isSelected = list.id === currentTodoList.id;
-                return (
-                  <div
-                    key={list.id}
-                    onClick={() => {
-                      setActiveTodoListId(list.id);
-                      setIsTodoListModalOpen(false);
-                    }}
-                    className={`flex items-center justify-between px-3 py-2 rounded-2xl cursor-pointer transition-colors ${
-                      isSelected
-                        ? 'bg-md-primary-container text-md-on-primary-container font-bold'
-                        : 'bg-md-surface hover:bg-md-surface-high text-md-on-surface'
-                    }`}
-                  >
-                    <span className="text-xs truncate flex items-center gap-2">
-                      <IconFolder size={13} />
-                      <span>
-                        {list.title} ({list.tasks.length} tâche
-                        {list.tasks.length > 1 ? 's' : ''})
-                      </span>
-                    </span>
-                    {todoLists.length > 1 && (
+            {/* Choix de la sonnerie (12 sonneries, Bip Digital par défaut) */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold text-md-on-surface-variant">
+                Sonnerie de fin ({TIMER_SOUNDS.length} disponibles)
+              </label>
+              <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                {TIMER_SOUNDS.map((sound) => {
+                  const active = newTimerSound === sound.id;
+                  return (
+                    <div
+                      key={sound.id}
+                      onClick={() => setNewTimerSound(sound.id)}
+                      className={`flex items-center justify-between px-3 py-2 rounded-2xl border cursor-pointer transition-colors ${
+                        active
+                          ? 'bg-md-primary-container text-md-on-primary-container border-md-primary'
+                          : 'bg-md-surface text-md-on-surface border-md-outline hover:bg-md-surface-high'
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold truncate">
+                          {sound.label}
+                        </p>
+                        <p className="text-[10px] opacity-75 truncate">
+                          {sound.description}
+                        </p>
+                      </div>
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleDeleteListById(list.id);
+                          setNewTimerSound(sound.id);
+                          playTimerSound(sound.id);
                         }}
-                        className="opacity-70 hover:opacity-100 hover:text-rose-500 p-1"
-                        title="Supprimer cette liste"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-md-surface-container text-md-on-surface text-[11px] font-semibold hover:opacity-90 shrink-0"
                       >
-                        <IconTrash size={13} />
+                        <IconVolume size={12} />
+                        <span>Écouter</span>
                       </button>
-                    )}
-                  </div>
-                );
-              })}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        </div>
-      )}
 
-      {/* ====================================================================
-          MODALE 4 : LISTE DES NOTES & BARRE DE RECHERCHE (Sans bordure, Esc)
-          ==================================================================== */}
-      {isNotesModalOpen && (
-        <div
-          onClick={() => setIsNotesModalOpen(false)}
-          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm rounded-3xl bg-md-surface-container p-5 space-y-3.5 shadow-2xl flex flex-col max-h-[82vh]"
-          >
-            <div className="flex items-center justify-between shrink-0">
-              <h2 className="text-sm font-bold text-md-on-surface flex items-center gap-2">
-                <IconNote size={16} className="text-md-primary" />
-                <span>Toutes les notes ({notes.length})</span>
-              </h2>
+            <div className="flex items-center justify-end gap-2 pt-1">
               <button
                 type="button"
-                onClick={() => setIsNotesModalOpen(false)}
-                className="w-7 h-7 rounded-full bg-md-surface text-md-on-surface-variant hover:text-md-on-surface flex items-center justify-center"
+                onClick={() => setIsTimerModalOpen(false)}
+                className="px-4 py-2 rounded-full bg-md-surface text-md-on-surface-variant text-xs font-semibold"
               >
-                <IconClose size={14} />
+                Annuler
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2 rounded-full bg-md-primary text-md-on-primary text-xs font-bold"
+              >
+                Créer le minuteur
               </button>
             </div>
+          </form>
+        </div>
+      </Modal>
 
-            <div className="relative shrink-0">
-              <IconSearch
-                size={14}
-                className="absolute left-3.5 top-1/2 -translate-y-1/2 text-md-on-surface-variant"
+      {/* ====================================================================
+          MODALE 2 : CRÉATION / MODIFICATION D'UNE TÂCHE TODO (Animée, Sans heure par défaut)
+          ==================================================================== */}
+      <Modal
+        open={isTaskModalOpen}
+        onClose={() => setIsTaskModalOpen(false)}
+        className="max-w-sm"
+        ariaLabelledBy="task-modal-title"
+      >
+        <div className="w-full rounded-3xl bg-md-surface-container p-5 space-y-3.5 shadow-2xl max-h-[90vh] overflow-y-auto">
+          <div className="flex items-center justify-between">
+            <h2
+              id="task-modal-title"
+              className="text-sm font-bold text-md-on-surface flex items-center gap-2"
+            >
+              <IconCheckCircle size={16} className="text-md-primary" />
+              <span>
+                {editingTaskId
+                  ? editingParentTaskId
+                    ? 'Modifier la sous-tâche'
+                    : 'Modifier la tâche'
+                  : creatingForParentId
+                  ? 'Nouvelle sous-tâche'
+                  : `Nouvelle tâche (${currentTodoList.title})`}
+              </span>
+            </h2>
+            <button
+              type="button"
+              onClick={() => setIsTaskModalOpen(false)}
+              aria-label="Fermer"
+              className="w-7 h-7 rounded-full bg-md-surface text-md-on-surface-variant hover:text-md-on-surface flex items-center justify-center"
+            >
+              <IconClose size={14} />
+            </button>
+          </div>
+
+          <form onSubmit={handleSaveTaskFromModal} className="space-y-3">
+            <div className="space-y-1">
+              <label
+                htmlFor="task-modal-title-input"
+                className="text-[11px] font-semibold text-md-on-surface-variant"
+              >
+                Titre{' '}
+                <span className="font-normal opacity-70">
+                  (optionnel si description)
+                </span>
+              </label>
+              <input
+                id="task-modal-title-input"
+                type="text"
+                autoFocus
+                value={taskTitle}
+                onChange={(e) => setTaskTitle(e.target.value)}
+                placeholder={
+                  creatingForParentId
+                    ? 'Ex: Étape intermédiaire...'
+                    : 'Ex: Préparer la présentation...'
+                }
+                className="w-full bg-md-surface border border-md-outline focus:border-md-primary focus:outline-none rounded-2xl px-3.5 py-2 text-xs text-md-on-surface"
               />
+            </div>
+
+            <div className="space-y-1">
+              <label
+                htmlFor="task-modal-desc-input"
+                className="text-[11px] font-semibold text-md-on-surface-variant"
+              >
+                Description
+              </label>
+              <textarea
+                id="task-modal-desc-input"
+                value={taskDescription}
+                onChange={(e) => setTaskDescription(e.target.value)}
+                placeholder="Détails, notes ou contexte..."
+                style={
+                  {
+                    '--krono-min-lines': '2.6lh',
+                    '--krono-max-lines': '9lh',
+                  } as React.CSSProperties
+                }
+                className="krono-autogrow-textarea bg-md-surface border border-md-outline focus:border-md-primary focus:outline-none rounded-2xl px-3.5 py-2 text-xs text-md-on-surface leading-relaxed"
+              />
+            </div>
+
+            {/* Durée prévue en liste déroulante (« Sans heure » par défaut) */}
+            <div className="space-y-1">
+              <label
+                htmlFor="task-modal-duration-select"
+                className="text-[11px] font-semibold text-md-on-surface-variant"
+              >
+                Durée prévue
+              </label>
+              <div className="flex items-center gap-2">
+                <select
+                  id="task-modal-duration-select"
+                  name="duration"
+                  value={
+                    taskDurationIsCustom
+                      ? 'custom'
+                      : KNOWN_DURATION_VALUES.has(taskDurationMinutes)
+                      ? taskDurationMinutes
+                      : 'custom'
+                  }
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === 'custom') {
+                      setTaskDurationIsCustom(true);
+                      if (!taskDurationMinutes) {
+                        setTaskDurationMinutes('25');
+                      }
+                    } else {
+                      setTaskDurationIsCustom(false);
+                      setTaskDurationMinutes(val);
+                    }
+                  }}
+                  className="krono-select flex-1"
+                >
+                  {TASK_DURATION_DROPDOWN_OPTIONS.map((opt) => (
+                    <option key={opt.value || 'none'} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                  <option value="custom">Durée personnalisée...</option>
+                </select>
+
+                {(taskDurationIsCustom ||
+                  (Boolean(taskDurationMinutes) &&
+                    !KNOWN_DURATION_VALUES.has(taskDurationMinutes))) && (
+                  <div className="relative w-20 shrink-0">
+                    <input
+                      type="number"
+                      min={1}
+                      max={999}
+                      value={taskDurationMinutes}
+                      onChange={(e) => setTaskDurationMinutes(e.target.value)}
+                      placeholder="min"
+                      className="w-full bg-md-surface border border-md-outline focus:border-md-primary rounded-2xl pl-2.5 pr-6 py-2 text-xs text-center font-mono text-md-on-surface focus:outline-none"
+                    />
+                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-md-on-surface-variant">
+                      m
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Statut et Priorité : listes déroulantes côte à côte */}
+            <div className="grid grid-cols-2 gap-2.5">
+              <div className="space-y-1">
+                <label
+                  htmlFor="task-modal-status-select"
+                  className="text-[11px] font-semibold text-md-on-surface-variant"
+                >
+                  Statut
+                </label>
+                <select
+                  id="task-modal-status-select"
+                  name="status"
+                  value={taskStatus}
+                  onChange={(e) => setTaskStatus(e.target.value as TodoStatus)}
+                  className="krono-select"
+                >
+                  {(
+                    ['not_started', 'in_progress', 'completed'] as TodoStatus[]
+                  ).map((st) => (
+                    <option key={st} value={st}>
+                      {STATUS_META[st].label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label
+                  htmlFor="task-modal-priority-select"
+                  className="text-[11px] font-semibold text-md-on-surface-variant"
+                >
+                  Priorité
+                </label>
+                <select
+                  id="task-modal-priority-select"
+                  name="priority"
+                  value={taskPriority}
+                  onChange={(e) => setTaskPriority(e.target.value as Priority)}
+                  className="krono-select"
+                >
+                  {(['low', 'medium', 'high'] as Priority[]).map((prio) => (
+                    <option key={prio} value={prio}>
+                      {PRIORITY_STYLES[prio].label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsTaskModalOpen(false)}
+                className="px-4 py-2 rounded-full bg-md-surface text-md-on-surface-variant text-xs font-semibold"
+              >
+                Annuler
+              </button>
+              <button
+                type="submit"
+                disabled={!taskTitle.trim() && !taskDescription.trim()}
+                className="px-5 py-2 rounded-full bg-md-primary text-md-on-primary text-xs font-bold disabled:opacity-45 transition-opacity"
+              >
+                {editingTaskId ? 'Enregistrer' : 'Ajouter'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </Modal>
+
+      {/* ====================================================================
+          MODALE 3 : GESTION DES LISTES DE TÂCHES (Animée)
+          ==================================================================== */}
+      <Modal
+        open={isTodoListModalOpen}
+        onClose={() => setIsTodoListModalOpen(false)}
+        className="max-w-sm"
+        ariaLabelledBy="todolist-modal-title"
+      >
+        <div className="w-full rounded-3xl bg-md-surface-container p-5 space-y-4 shadow-2xl">
+          <div className="flex items-center justify-between">
+            <h2
+              id="todolist-modal-title"
+              className="text-sm font-bold text-md-on-surface flex items-center gap-2"
+            >
+              <IconFolder size={16} className="text-md-primary" />
+              <span>Listes de tâches</span>
+            </h2>
+            <button
+              type="button"
+              onClick={() => setIsTodoListModalOpen(false)}
+              aria-label="Fermer"
+              className="w-7 h-7 rounded-full bg-md-surface text-md-on-surface-variant hover:text-md-on-surface flex items-center justify-center"
+            >
+              <IconClose size={14} />
+            </button>
+          </div>
+
+          <form onSubmit={handleCreateTodoList} className="space-y-2">
+            <label className="text-[11px] font-semibold text-md-on-surface-variant">
+              Créer une nouvelle liste
+            </label>
+            <div className="flex gap-2">
               <input
                 type="text"
                 autoFocus
-                value={noteSearchQuery}
-                onChange={(e) => setNoteSearchQuery(e.target.value)}
-                placeholder="Rechercher par titre ou contenu..."
-                className="w-full bg-md-surface border border-md-outline focus:border-md-primary focus:outline-none rounded-full pl-9 pr-3.5 py-2 text-xs text-md-on-surface"
+                value={newListName}
+                onChange={(e) => setNewListName(e.target.value)}
+                placeholder="Ex: Sprint, Courses, Idées..."
+                className="flex-1 bg-md-surface border border-md-outline focus:border-md-primary focus:outline-none rounded-full px-3.5 py-2 text-xs text-md-on-surface"
               />
+              <button
+                type="submit"
+                className="px-4 py-2 rounded-full bg-md-primary text-md-on-primary text-xs font-bold"
+              >
+                Créer
+              </button>
             </div>
+          </form>
 
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-              {sortedFilteredNotes.length === 0 ? (
-                <p className="text-xs text-center py-8 text-md-on-surface-variant">
-                  Aucune note ne correspond à votre recherche.
-                </p>
-              ) : (
-                sortedFilteredNotes.map((note) => {
-                  const isSelected = currentNote?.id === note.id;
-                  const preview = stripHtml(note.content).trim();
-
-                  return (
-                    <div
-                      key={note.id}
-                      onClick={() => {
-                        setActiveNoteId(note.id);
-                        setIsNotesModalOpen(false);
+          <div className="space-y-1.5 max-h-48 overflow-y-auto pt-2 border-t border-md-outline">
+            <p className="text-[11px] font-semibold text-md-on-surface-variant">
+              Vos listes existantes
+            </p>
+            {todoLists.map((list) => {
+              const isSelected = list.id === currentTodoList.id;
+              return (
+                <div
+                  key={list.id}
+                  onClick={() => {
+                    setActiveTodoListId(list.id);
+                    setIsTodoListModalOpen(false);
+                  }}
+                  className={`flex items-center justify-between px-3 py-2 rounded-2xl cursor-pointer transition-colors ${
+                    isSelected
+                      ? 'bg-md-primary-container text-md-on-primary-container font-bold'
+                      : 'bg-md-surface hover:bg-md-surface-high text-md-on-surface'
+                  }`}
+                >
+                  <span className="text-xs truncate flex items-center gap-2">
+                    <IconFolder size={13} />
+                    <span>
+                      {list.title} ({list.tasks.length} tâche
+                      {list.tasks.length > 1 ? 's' : ''})
+                    </span>
+                  </span>
+                  {todoLists.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteListById(list.id);
                       }}
-                      className={`p-3 rounded-2xl border cursor-pointer transition-colors ${
-                        isSelected
-                          ? 'bg-md-primary-container text-md-on-primary-container border-md-primary'
-                          : 'bg-md-surface hover:bg-md-surface-high text-md-on-surface border-md-outline'
-                      }`}
+                      className="opacity-70 hover:opacity-100 hover:text-rose-500 p-1"
+                      title="Supprimer cette liste"
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          {note.pinned && (
-                            <IconPin size={12} className="shrink-0" />
-                          )}
-                          <h3 className="text-xs font-bold truncate">
-                            {note.title.trim() || 'Note sans titre'}
-                          </h3>
-                        </div>
-
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="text-[10px] opacity-70">
-                            {new Date(note.updatedAt).toLocaleDateString(
-                              'fr-FR',
-                              {
-                                day: '2-digit',
-                                month: 'short',
-                              }
-                            )}
-                          </span>
-                          {notes.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteNote(note.id);
-                              }}
-                              className="opacity-65 hover:opacity-100 hover:text-rose-500 p-1"
-                              title="Supprimer cette note"
-                            >
-                              <IconTrash size={12} />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      {preview && (
-                        <p className="text-[11px] opacity-75 line-clamp-2 mt-1 break-words">
-                          {preview}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            <div className="pt-2 border-t border-md-outline flex justify-between items-center shrink-0">
-              <button
-                type="button"
-                onClick={() => {
-                  handleCreateNote();
-                  setIsNotesModalOpen(false);
-                }}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-md-primary text-md-on-primary text-xs font-bold"
-              >
-                <IconPlus size={13} />
-                <span>Créer une note</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsNotesModalOpen(false)}
-                className="px-4 py-2 rounded-full bg-md-surface text-md-on-surface-variant text-xs font-semibold"
-              >
-                Fermer
-              </button>
-            </div>
+                      <IconTrash size={13} />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
-      )}
+      </Modal>
 
       {/* ====================================================================
-          MODALE 5 : À PROPOS & TUTORIEL (Sans bordure, Esc, Taille 420x760)
+          MODALE 4 : LISTE DES NOTES & BARRE DE RECHERCHE (Animée)
           ==================================================================== */}
-      {isAboutModalOpen && (
-        <div
-          onClick={() => setIsAboutModalOpen(false)}
-          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm rounded-3xl bg-md-surface-container p-5 space-y-4 shadow-2xl max-h-[86vh] flex flex-col"
-          >
-            <div className="flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2">
-                <img
-                  src="/icons/icon48.png"
-                  alt="KronoTab"
-                  className="w-6 h-6 rounded-lg"
-                />
-                <h2 className="text-sm font-bold text-md-on-surface">
-                  KronoTab v1.3
-                </h2>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsAboutModalOpen(false)}
-                className="w-7 h-7 rounded-full bg-md-surface text-md-on-surface-variant hover:text-md-on-surface flex items-center justify-center"
-              >
-                <IconClose size={14} />
-              </button>
-            </div>
+      <Modal
+        open={isNotesModalOpen}
+        onClose={() => setIsNotesModalOpen(false)}
+        className="max-w-sm"
+        ariaLabelledBy="notes-modal-title"
+      >
+        <div className="w-full rounded-3xl bg-md-surface-container p-5 space-y-3.5 shadow-2xl flex flex-col max-h-[82vh]">
+          <div className="flex items-center justify-between shrink-0">
+            <h2
+              id="notes-modal-title"
+              className="text-sm font-bold text-md-on-surface flex items-center gap-2"
+            >
+              <IconNote size={16} className="text-md-primary" />
+              <span>Toutes les notes ({notes.length})</span>
+            </h2>
+            <button
+              type="button"
+              onClick={() => setIsNotesModalOpen(false)}
+              aria-label="Fermer"
+              className="w-7 h-7 rounded-full bg-md-surface text-md-on-surface-variant hover:text-md-on-surface flex items-center justify-center"
+            >
+              <IconClose size={14} />
+            </button>
+          </div>
 
-            <div className="grid grid-cols-2 gap-1 bg-md-surface p-1 rounded-full border border-md-outline shrink-0">
-              <button
-                type="button"
-                onClick={() => setAboutModalTab('tutorial')}
-                className={`py-1.5 rounded-full text-xs font-bold transition-colors ${
-                  aboutModalTab === 'tutorial'
-                    ? 'bg-md-primary text-md-on-primary'
-                    : 'text-md-on-surface-variant hover:text-md-on-surface'
-                }`}
-              >
-                Tutoriel Bureau
-              </button>
-              <button
-                type="button"
-                onClick={() => setAboutModalTab('about')}
-                className={`py-1.5 rounded-full text-xs font-bold transition-colors ${
-                  aboutModalTab === 'about'
-                    ? 'bg-md-primary text-md-on-primary'
-                    : 'text-md-on-surface-variant hover:text-md-on-surface'
-                }`}
-              >
-                À propos
-              </button>
-            </div>
+          <div className="relative shrink-0">
+            <IconSearch
+              size={14}
+              className="absolute left-3.5 top-1/2 -translate-y-1/2 text-md-on-surface-variant"
+            />
+            <input
+              type="text"
+              autoFocus
+              value={noteSearchQuery}
+              onChange={(e) => setNoteSearchQuery(e.target.value)}
+              placeholder="Rechercher par titre ou contenu..."
+              className="w-full bg-md-surface border border-md-outline focus:border-md-primary focus:outline-none rounded-full pl-9 pr-3.5 py-2 text-xs text-md-on-surface"
+            />
+          </div>
 
-            <div className="flex-1 overflow-y-auto space-y-3 text-xs leading-relaxed pr-1">
-              {aboutModalTab === 'tutorial' ? (
-                <div className="space-y-3">
-                  <p className="text-md-on-surface-variant">
-                    Créez un raccourci sur votre Bureau Windows pour lancer{' '}
-                    <b>KronoTab</b> directement dans une fenêtre dédiée aux
-                    dimensions idéales (<b>435 × 820 px</b>) :
-                  </p>
+          <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+            {sortedFilteredNotes.length === 0 ? (
+              <p className="text-xs text-center py-8 text-md-on-surface-variant">
+                Aucune note ne correspond à votre recherche.
+              </p>
+            ) : (
+              sortedFilteredNotes.map((note) => {
+                const isSelected = currentNote?.id === note.id;
+                const preview = stripHtml(note.content).trim();
 
-                  <ol className="list-decimal pl-4 space-y-2 text-md-on-surface">
-                    <li>
-                      Récupérez l'ID de votre extension dans{' '}
-                      <code className="px-1.5 py-0.5 rounded bg-md-surface font-mono text-[11px]">
-                        chrome://extensions/
-                      </code>{' '}
-                      (votre ID actuel :{' '}
-                      <code className="px-1.5 py-0.5 rounded bg-md-primary-container text-md-on-primary-container font-mono text-[11px]">
-                        {extensionId}
-                      </code>
-                      ).
-                    </li>
-                    <li>
-                      Faites un clic droit sur votre Bureau Windows →{' '}
-                      <b>Nouveau</b> → <b>Raccourci</b>.
-                    </li>
-                    <li>
-                      Collez cette commande (avec l'option{' '}
-                      <code className="font-mono text-[11px]">
-                        --window-size=435,820
-                      </code>
-                      ) :
-                      <div className="mt-1.5 p-2.5 rounded-2xl bg-md-surface border border-md-outline font-mono text-[10px] break-all select-all">
-                        {shortcutCommand}
+                return (
+                  <div
+                    key={note.id}
+                    onClick={() => {
+                      setActiveNoteId(note.id);
+                      setIsNotesModalOpen(false);
+                    }}
+                    className={`p-3 rounded-2xl border cursor-pointer transition-colors ${
+                      isSelected
+                        ? 'bg-md-primary-container text-md-on-primary-container border-md-primary'
+                        : 'bg-md-surface hover:bg-md-surface-high text-md-on-surface border-md-outline'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {note.pinned && (
+                          <IconPin size={12} className="shrink-0" />
+                        )}
+                        <h3 className="text-xs font-bold truncate">
+                          {note.title.trim() || 'Note sans titre'}
+                        </h3>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(shortcutCommand);
-                          showToast('Commande copiée dans le presse-papiers !');
-                        }}
-                        className="mt-1.5 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-md-primary-container text-md-on-primary-container text-[11px] font-bold hover:opacity-90"
-                      >
-                        <IconCopy size={12} />
-                        <span>Copier la commande (435×820)</span>
-                      </button>
-                    </li>
-                    <li>
-                      Nommez le raccourci <b>KronoTab</b> et épinglez-le à votre
-                      barre des tâches Windows.
-                    </li>
-                  </ol>
-                </div>
-              ) : (
-                <div className="space-y-2.5 text-md-on-surface-variant">
-                  <p>
-                    <b className="text-md-on-surface">KronoTab</b> est votre
-                    espace tout-en-un de productivité conçu pour Google Chrome :
-                  </p>
-                  <ul className="list-disc pl-4 space-y-1">
-                    <li>
-                      <b>Focus Timers</b> circulaires fluides (`hh:mm:ss`) avec
-                      badge d'icône Chrome et alarmes en arrière-plan.
-                    </li>
-                    <li>
-                      <b>Multi-Todos</b> avec édition, durée, indentation en
-                      sous-tâches et glisser-déposer.
-                    </li>
-                    <li>
-                      <b>Notepad</b> plein écran avec couleurs de texte,
-                      surligneur et nettoyage de mise en forme.
-                    </li>
-                    <li>
-                      <b>Multi-Kanban</b> compact avec réorganisation des
-                      colonnes et navigation panoramique au clic-glisser.
-                    </li>
-                  </ul>
-                </div>
-              )}
-            </div>
 
-            <div className="pt-2 border-t border-md-outline flex justify-between items-center shrink-0">
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-[10px] opacity-70">
+                          {new Date(note.updatedAt).toLocaleDateString(
+                            'fr-FR',
+                            {
+                              day: '2-digit',
+                              month: 'short',
+                            }
+                          )}
+                        </span>
+                        {notes.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteNote(note.id);
+                            }}
+                            className="opacity-65 hover:opacity-100 hover:text-rose-500 p-1"
+                            title="Supprimer cette note"
+                          >
+                            <IconTrash size={12} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {preview && (
+                      <p className="text-[11px] opacity-75 line-clamp-2 mt-1 break-words">
+                        {preview}
+                      </p>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          <div className="pt-2 border-t border-md-outline flex justify-between items-center shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                handleCreateNote();
+                setIsNotesModalOpen(false);
+              }}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-md-primary text-md-on-primary text-xs font-bold"
+            >
+              <IconPlus size={13} />
+              <span>Créer une note</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsNotesModalOpen(false)}
+              className="px-4 py-2 rounded-full bg-md-surface text-md-on-surface-variant text-xs font-semibold"
+            >
+              Fermer
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ====================================================================
+          MODALE 5 : À PROPOS & TUTORIEL (Animée)
+          ==================================================================== */}
+      <Modal
+        open={isAboutModalOpen}
+        onClose={() => setIsAboutModalOpen(false)}
+        className="max-w-sm"
+        ariaLabelledBy="about-modal-title"
+      >
+        <div className="w-full rounded-3xl bg-md-surface-container p-5 space-y-4 shadow-2xl max-h-[86vh] flex flex-col">
+          <div className="flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-2">
+              <img
+                src="/icons/icon48.png"
+                alt="KronoTab"
+                className="w-6 h-6 rounded-lg"
+              />
+              <h2
+                id="about-modal-title"
+                className="text-sm font-bold text-md-on-surface"
+              >
+                KronoTab v1.3
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsAboutModalOpen(false)}
+              aria-label="Fermer"
+              className="w-7 h-7 rounded-full bg-md-surface text-md-on-surface-variant hover:text-md-on-surface flex items-center justify-center"
+            >
+              <IconClose size={14} />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-1 bg-md-surface p-1 rounded-full border border-md-outline shrink-0">
+            <button
+              type="button"
+              onClick={() => setAboutModalTab('tutorial')}
+              className={`py-1.5 rounded-full text-xs font-bold transition-colors ${
+                aboutModalTab === 'tutorial'
+                  ? 'bg-md-primary text-md-on-primary'
+                  : 'text-md-on-surface-variant hover:text-md-on-surface'
+              }`}
+            >
+              Tutoriel Bureau
+            </button>
+            <button
+              type="button"
+              onClick={() => setAboutModalTab('about')}
+              className={`py-1.5 rounded-full text-xs font-bold transition-colors ${
+                aboutModalTab === 'about'
+                  ? 'bg-md-primary text-md-on-primary'
+                  : 'text-md-on-surface-variant hover:text-md-on-surface'
+              }`}
+            >
+              À propos
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto space-y-3 text-xs leading-relaxed pr-1">
+            {aboutModalTab === 'tutorial' ? (
+              <div className="space-y-3">
+                <p className="text-md-on-surface-variant">
+                  Créez un raccourci sur votre Bureau Windows pour lancer{' '}
+                  <b>KronoTab</b> directement dans une fenêtre dédiée aux
+                  dimensions idéales (<b>435 × 820 px</b>) :
+                </p>
+
+                <ol className="list-decimal pl-4 space-y-2 text-md-on-surface">
+                  <li>
+                    Récupérez l'ID de votre extension dans{' '}
+                    <code className="px-1.5 py-0.5 rounded bg-md-surface font-mono text-[11px]">
+                      chrome://extensions/
+                    </code>{' '}
+                    (votre ID actuel :{' '}
+                    <code className="px-1.5 py-0.5 rounded bg-md-primary-container text-md-on-primary-container font-mono text-[11px]">
+                      {extensionId}
+                    </code>
+                    ).
+                  </li>
+                  <li>
+                    Faites un clic droit sur votre Bureau Windows →{' '}
+                    <b>Nouveau</b> → <b>Raccourci</b>.
+                  </li>
+                  <li>
+                    Collez cette commande (avec l'option{' '}
+                    <code className="font-mono text-[11px]">
+                      --window-size=435,820
+                    </code>
+                    ) :
+                    <div className="mt-1.5 p-2.5 rounded-2xl bg-md-surface border border-md-outline font-mono text-[10px] break-all select-all">
+                      {shortcutCommand}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(shortcutCommand);
+                        showToast('Commande copiée dans le presse-papiers !');
+                      }}
+                      className="mt-1.5 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-md-primary-container text-md-on-primary-container text-[11px] font-bold hover:opacity-90"
+                    >
+                      <IconCopy size={12} />
+                      <span>Copier la commande (435×820)</span>
+                    </button>
+                  </li>
+                  <li>
+                    Nommez le raccourci <b>KronoTab</b> et épinglez-le à votre
+                    barre des tâches Windows.
+                  </li>
+                </ol>
+              </div>
+            ) : (
+              <div className="space-y-2.5 text-md-on-surface-variant">
+                <p>
+                  <b className="text-md-on-surface">KronoTab</b> est votre
+                  espace tout-en-un de productivité conçu pour Google Chrome :
+                </p>
+                <ul className="list-disc pl-4 space-y-1">
+                  <li>
+                    <b>Focus Timers</b> circulaires fluides (`hh:mm:ss`) avec
+                    badge d'icône Chrome et alarmes en arrière-plan.
+                  </li>
+                  <li>
+                    <b>Multi-Todos</b> minimalistes avec sous-tâches imbriquées
+                    pliables et synchronisation Kanban automatique.
+                  </li>
+                  <li>
+                    <b>Notepad</b> plein écran avec couleurs de texte,
+                    surligneur et nettoyage de mise en forme.
+                  </li>
+                  <li>
+                    <b>Multi-Kanban</b> compact avec réorganisation des
+                    colonnes et navigation panoramique au clic-glisser.
+                  </li>
+                </ul>
+              </div>
+            )}
+          </div>
+
+          <div className="pt-2 border-t border-md-outline flex justify-between items-center shrink-0">
+            {isInSidePanel ? (
               <button
                 type="button"
                 onClick={() => {
@@ -3075,17 +4369,19 @@ export const SidePanelApp: React.FC = () => {
                 <IconPipWindow size={13} />
                 <span>Ouvrir en fenêtre dédiée</span>
               </button>
-              <button
-                type="button"
-                onClick={() => setIsAboutModalOpen(false)}
-                className="px-4 py-2 rounded-full bg-md-primary text-md-on-primary text-xs font-bold"
-              >
-                Fermer
-              </button>
-            </div>
+            ) : (
+              <span />
+            )}
+            <button
+              type="button"
+              onClick={() => setIsAboutModalOpen(false)}
+              className="px-4 py-2 rounded-full bg-md-primary text-md-on-primary text-xs font-bold"
+            >
+              Fermer
+            </button>
           </div>
         </div>
-      )}
+      </Modal>
     </div>
   );
 };

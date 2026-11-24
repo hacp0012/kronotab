@@ -199,6 +199,12 @@ body {
 }
 
 /* Styles de l'éditeur riche (Notepad plein écran) */
+.krono-rich-editor {
+  white-space: pre-wrap;
+  tab-size: 4;
+  word-break: break-word;
+}
+
 .krono-rich-editor:empty:before {
   content: attr(data-placeholder);
   color: var(--md-on-surface-variant);
@@ -207,7 +213,7 @@ body {
 }
 
 .krono-rich-editor h1 {
-  font-size: 1.25rem;
+  font-size: 1.45em;
   font-weight: 700;
   margin-top: 0.5rem;
   margin-bottom: 0.35rem;
@@ -215,7 +221,7 @@ body {
 }
 
 .krono-rich-editor h2 {
-  font-size: 1.05rem;
+  font-size: 1.2em;
   font-weight: 700;
   margin-top: 0.45rem;
   margin-bottom: 0.25rem;
@@ -224,14 +230,19 @@ body {
 
 .krono-rich-editor ul {
   list-style-type: disc;
-  padding-left: 1.35rem;
-  margin: 0.35rem 0;
+  padding-left: 1.4em;
+  margin: 0.3rem 0;
+}
+
+.krono-rich-editor ul ul {
+  list-style-type: circle;
+  margin: 0.1rem 0;
 }
 
 .krono-rich-editor ol {
   list-style-type: decimal;
-  padding-left: 1.35rem;
-  margin: 0.35rem 0;
+  padding-left: 1.5em;
+  margin: 0.3rem 0;
 }
 
 .krono-rich-editor blockquote {
@@ -249,7 +260,266 @@ body {
 }
 
 .krono-rich-editor p {
-  margin-bottom: 0.35rem;
+  margin-bottom: 0.25rem;
+}
+
+/* Cases à cocher Markdown interactives dans les Notes */
+.krono-rich-editor .krono-note-task {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5em;
+  margin: 0.2em 0;
+  min-height: 1.45em;
+}
+
+.krono-rich-editor .krono-note-task[data-indent="1"] { padding-left: 1.5em; }
+.krono-rich-editor .krono-note-task[data-indent="2"] { padding-left: 3em; }
+.krono-rich-editor .krono-note-task[data-indent="3"] { padding-left: 4.5em; }
+.krono-rich-editor .krono-note-task[data-indent="4"] { padding-left: 6em; }
+.krono-rich-editor .krono-note-task[data-indent="5"] { padding-left: 7.5em; }
+
+.krono-rich-editor .krono-note-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 1.05em;
+  height: 1.05em;
+  margin-top: 0.22em;
+  flex-shrink: 0;
+  border-radius: 0.28em;
+  border: 1.5px solid var(--md-on-surface-variant);
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+  transition: background-color 0.14s ease, border-color 0.14s ease;
+}
+
+.krono-rich-editor .krono-note-checkbox:hover {
+  border-color: var(--md-primary);
+}
+
+.krono-rich-editor .krono-note-checkbox:checked {
+  background-color: var(--md-primary);
+  border-color: var(--md-primary);
+}
+
+.krono-rich-editor .krono-note-checkbox:checked::after {
+  content: "";
+  position: absolute;
+  left: 30%;
+  top: 12%;
+  width: 34%;
+  height: 62%;
+  border: solid var(--md-on-primary);
+  border-width: 0 1.8px 1.8px 0;
+  transform: rotate(45deg);
+}
+
+.krono-rich-editor .krono-note-task-text {
+  flex: 1;
+  min-width: 0;
+  outline: none;
+}
+
+.krono-rich-editor .krono-note-task[data-checked="true"] .krono-note-task-text {
+  text-decoration: line-through;
+  opacity: 0.58;
+  color: var(--md-on-surface-variant);
+}
+
+/* Case à cocher 3 états (Non commencée [ ] → En cours [/] → Terminée [x]) */
+.krono-rich-editor .krono-note-tristate-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 1.1em;
+  height: 1.1em;
+  margin-top: 0.2em;
+  padding: 0;
+  flex-shrink: 0;
+  border-radius: 0.3em;
+  border: 1.5px solid var(--md-on-surface-variant);
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.14s ease, border-color 0.14s ease, transform 0.1s ease;
+}
+
+.krono-rich-editor .krono-note-tristate-btn:hover {
+  border-color: var(--md-primary);
+}
+
+.krono-rich-editor .krono-note-tristate-btn:active {
+  transform: scale(0.9);
+}
+
+.krono-rich-editor .krono-note-tristate-btn[data-state="in_progress"] {
+  border-color: #0ea5e9;
+  background-color: rgba(14, 165, 233, 0.14);
+}
+
+.krono-rich-editor .krono-note-tristate-btn[data-state="in_progress"]::after {
+  content: "";
+  position: absolute;
+  width: 58%;
+  height: 2px;
+  border-radius: 9999px;
+  background-color: #0ea5e9;
+  transform: rotate(-45deg);
+}
+
+.krono-rich-editor .krono-note-tristate-btn[data-state="completed"] {
+  background-color: var(--md-primary);
+  border-color: var(--md-primary);
+}
+
+.krono-rich-editor .krono-note-tristate-btn[data-state="completed"]::after {
+  content: "";
+  position: absolute;
+  left: 30%;
+  top: 12%;
+  width: 34%;
+  height: 62%;
+  border: solid var(--md-on-primary);
+  border-width: 0 1.8px 1.8px 0;
+  transform: rotate(45deg);
+}
+
+.krono-rich-editor .krono-note-task[data-state="in_progress"] .krono-note-task-text {
+  color: var(--md-on-surface);
+}
+
+/* Balise Timer inline dans les Notes ([timer:hh:mm:ss], [timer:mm:ss], [timer:mm]) */
+.krono-rich-editor .krono-note-timer-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  padding: 0.06em 0.5em 0.06em 0.42em;
+  margin: 0 0.12em;
+  border-radius: 9999px;
+  background-color: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+  font-family: 'Google Sans Mono', 'Roboto Mono', ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.9em;
+  font-weight: 600;
+  line-height: 1.35;
+  vertical-align: baseline;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.14s ease, color 0.14s ease, transform 0.1s ease;
+}
+
+.krono-rich-editor .krono-note-timer-tag::before {
+  content: "";
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  flex-shrink: 0;
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cline x1='10' x2='14' y1='2' y2='2'/%3E%3Cline x1='12' x2='15' y1='14' y2='11'/%3E%3Ccircle cx='12' cy='14' r='8'/%3E%3C/svg%3E") no-repeat center / contain;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cline x1='10' x2='14' y1='2' y2='2'/%3E%3Cline x1='12' x2='15' y1='14' y2='11'/%3E%3Ccircle cx='12' cy='14' r='8'/%3E%3C/svg%3E") no-repeat center / contain;
+}
+
+.krono-rich-editor .krono-note-timer-tag:hover {
+  background-color: var(--md-primary);
+  color: var(--md-on-primary);
+}
+
+.krono-rich-editor .krono-note-timer-tag:active {
+  transform: scale(0.95);
+}
+
+.krono-rich-editor .krono-note-timer-tag:focus-visible {
+  outline: 2px solid var(--md-primary);
+  outline-offset: 2px;
+}
+
+/* Zone de texte extensible jusqu'à une dimension maximale (field-sizing: content) */
+.krono-autogrow-textarea {
+  field-sizing: content;
+  width: 100%;
+  height: auto;
+  min-block-size: var(--krono-min-lines, 2.6lh);
+  max-block-size: var(--krono-max-lines, 9lh);
+  overflow-y: auto;
+  resize: none;
+}
+
+/* Listes déroulantes stylées Material Design 3 (progressive enhancement base-select) */
+.krono-select {
+  background-color: var(--md-surface);
+  color: var(--md-on-surface);
+  border: 1px solid var(--md-outline);
+  border-radius: 0.875rem;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.3;
+  cursor: pointer;
+  width: 100%;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.krono-select:focus {
+  outline: none;
+  border-color: var(--md-primary);
+}
+
+@supports (appearance: base-select) {
+  .krono-select,
+  .krono-select::picker(select) {
+    appearance: base-select;
+  }
+
+  .krono-select {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .krono-select::picker-icon {
+    color: var(--md-on-surface-variant);
+    transition: transform 0.15s ease;
+  }
+
+  .krono-select:open::picker-icon {
+    transform: rotate(180deg);
+  }
+
+  .krono-select::picker(select) {
+    background-color: var(--md-surface-container);
+    color: var(--md-on-surface);
+    border: 1px solid var(--md-outline);
+    border-radius: 0.875rem;
+    padding: 0.25rem;
+    box-shadow: 0 12px 28px rgb(0 0 0 / 0.22);
+    margin-block-start: 0.25rem;
+  }
+
+  .krono-select option {
+    padding: 0.4rem 0.65rem;
+    border-radius: 0.6rem;
+    font-size: 0.75rem;
+    color: var(--md-on-surface);
+    cursor: pointer;
+  }
+
+  .krono-select option:hover,
+  .krono-select option:focus {
+    background-color: var(--md-surface-high);
+  }
+
+  .krono-select option:checked {
+    background-color: var(--md-primary-container);
+    color: var(--md-on-primary-container);
+    font-weight: 600;
+  }
+
+  .krono-select option::checkmark {
+    color: var(--md-primary);
+  }
 }
 
 /* Scrollbars Material Flat fines */
@@ -265,4 +535,153 @@ body {
 ::-webkit-scrollbar-thumb {
   background: var(--md-outline);
   border-radius: 9999px;
+}
+
+/* ==========================================================================
+   ANIMATIONS NATIVES DES MODALES & TIROIRS (<dialog>)
+   Top-layer entry (@starting-style) & exit (allow-discrete + overlay)
+   ========================================================================== */
+dialog.krono-dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog.krono-dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+  background-color: rgb(0 0 0 / 0);
+  backdrop-filter: blur(0px);
+  transition-property: background-color, backdrop-filter, display, overlay;
+  transition-duration: 0.22s;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  transition-behavior: allow-discrete;
+}
+
+dialog.krono-dialog[open]:not([data-closing])::backdrop {
+  background-color: rgb(0 0 0 / 0.55);
+  backdrop-filter: blur(2px);
+}
+
+@starting-style {
+  dialog.krono-dialog[open]:not([data-closing])::backdrop {
+    background-color: rgb(0 0 0 / 0);
+    backdrop-filter: blur(0px);
+  }
+}
+
+dialog.krono-dialog {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  overflow: visible;
+  opacity: 0;
+  transition-property: opacity, transform, display, overlay;
+  transition-duration: 0.22s;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  transition-behavior: allow-discrete;
+}
+
+dialog.krono-dialog.krono-dialog-modal {
+  margin: auto;
+  width: calc(100% - 2rem);
+  max-height: 90dvh;
+}
+
+dialog.krono-dialog.krono-dialog-drawer-left {
+  margin: 0;
+  height: 100dvh;
+  max-height: 100dvh;
+  max-width: 85vw;
+}
+
+dialog.krono-dialog[open]:not([data-closing]) {
+  opacity: 1;
+}
+
+@starting-style {
+  dialog.krono-dialog[open]:not([data-closing]) {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  dialog.krono-dialog.krono-dialog-modal {
+    transform: translateY(10px) scale(0.95);
+  }
+
+  dialog.krono-dialog.krono-dialog-modal[open]:not([data-closing]) {
+    transform: translateY(0) scale(1);
+  }
+
+  @starting-style {
+    dialog.krono-dialog.krono-dialog-modal[open]:not([data-closing]) {
+      transform: translateY(10px) scale(0.95);
+    }
+  }
+
+  dialog.krono-dialog.krono-dialog-drawer-left {
+    transform: translateX(-100%);
+  }
+
+  dialog.krono-dialog.krono-dialog-drawer-left[open]:not([data-closing]) {
+    transform: translateX(0);
+  }
+
+  @starting-style {
+    dialog.krono-dialog.krono-dialog-drawer-left[open]:not([data-closing]) {
+      transform: translateX(-100%);
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  dialog.krono-dialog,
+  dialog.krono-dialog::backdrop {
+    transition-duration: 0.1s;
+  }
+}
+
+/* Animation discrète des menus contextuels et popovers */
+@keyframes krono-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.krono-menu-enter {
+  animation: krono-menu-in 0.14s cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .krono-menu-enter {
+    animation-duration: 0.06s;
+  }
+}
+
+/* Pliage / dépliage fluide des sous-tâches imbriquées */
+.krono-collapsible {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.18s cubic-bezier(0.2, 0, 0, 1), opacity 0.16s ease;
+  opacity: 1;
+}
+
+.krono-collapsible[data-collapsed="true"] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.krono-collapsible > .krono-collapsible-inner {
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .krono-collapsible {
+    transition-duration: 0.05s;
+  }
 }

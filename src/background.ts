@@ -5,6 +5,7 @@ import {
   DEFAULT_THEME_SETTINGS,
   DEFAULT_TIMERS,
   DEFAULT_TODO_LISTS,
+  TODOS_KANBAN_BOARD_ID,
   TimerItem,
   TimerSoundId,
 } from './shared/types';
@@ -84,7 +85,7 @@ chrome.runtime.onInstalled.addListener(() => {
       if (!res.kanbanTemplates)
         initialPayload.kanbanTemplates = DEFAULT_KANBAN_TEMPLATES;
       if (!res.activeKanbanId)
-        initialPayload.activeKanbanId = DEFAULT_KANBANS[0].id;
+        initialPayload.activeKanbanId = TODOS_KANBAN_BOARD_ID;
       if (!res.timers) initialPayload.timers = DEFAULT_TIMERS;
       if (!res.notes) initialPayload.notes = DEFAULT_NOTES;
       if (!res.themeSettings) initialPayload.themeSettings = DEFAULT_THEME_SETTINGS;
@@ -301,7 +302,7 @@ function finalizeExpiredTimer(timerId: string): void {
         updateActionBadge(updatedTimers);
 
         triggerOffscreenAlarmSound(
-          targetTimer.soundId || 'chime',
+          targetTimer.soundId || 'digital',
           Boolean(targetTimer.repeatAlarm)
         );
 

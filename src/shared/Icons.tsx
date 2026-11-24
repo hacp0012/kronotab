@@ -394,3 +394,48 @@ export const IconSidebar: React.FC<IconProps> = (props) => (
   </BaseSvg>
 );
 
+export const IconChevronRight: React.FC<IconProps> = (props) => (
+  <BaseSvg {...props}>
+    <path d="m9 18 6-6-6-6" />
+  </BaseSvg>
+);
+
+export const IconChevronDown: React.FC<IconProps> = (props) => (
+  <BaseSvg {...props}>
+    <path d="m6 9 6 6 6-6" />
+  </BaseSvg>
+);
+
+export const IconLink: React.FC<IconProps> = (props) => (
+  <BaseSvg {...props}>
+    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+  </BaseSvg>
+);
+
+export const IconMoreHorizontal: React.FC<IconProps> = (props) => (
+  <BaseSvg {...props}>
+    <circle cx="12" cy="12" r="1.2" fill="currentColor" />
+    <circle cx="5" cy="12" r="1.2" fill="currentColor" />
+    <circle cx="19" cy="12" r="1.2" fill="currentColor" />
+  </BaseSvg>
+);
+
+export const IconCheckbox: React.FC<IconProps> = (props) => (
+  <BaseSvg {...props}>
+    <rect x="3" y="3" width="18" height="18" rx="3.5" />
+    <path d="m8 12.5 2.5 2.5 5.5-5.5" />
+  </BaseSvg>
+);
+
+export const IconTriStateCheckbox: React.FC<IconProps> = (props) => (
+  <BaseSvg {...props}>
+    <rect x="3" y="3" width="18" height="18" rx="3.5" />
+    <path d="M3 12h18" opacity="0.25" />
+    <path d="M8 12h8" strokeWidth="2.3" />
+    <circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none" />
+  </BaseSvg>
+);
+
+
+

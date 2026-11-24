@@ -1,6 +1,23 @@
 export type Priority = 'low' | 'medium' | 'high';
 export type TodoStatus = 'not_started' | 'in_progress' | 'completed';
 
+export type ManagedWindowKey = 'standalone' | 'kanban' | 'timer';
+
+export interface WindowBounds {
+  width: number;
+  height: number;
+}
+
+export type SavedWindowBounds = Partial<Record<ManagedWindowKey, WindowBounds>>;
+
+export const TODOS_KANBAN_BOARD_ID = 'kb_todos_sync';
+
+export const TODOS_KANBAN_COLUMN_IDS: Record<TodoStatus, string> = {
+  not_started: 'col_todos_not_started',
+  in_progress: 'col_todos_in_progress',
+  completed: 'col_todos_completed',
+};
+
 export interface TodoSubtask {
   id: string;
   title: string;
@@ -11,9 +28,11 @@ export interface TodoTask {
   id: string;
   text: string; // Titre principal de la tâche
   description?: string; // Description détaillée
-  durationMinutes?: number; // Durée estimée / associée en minutes
-  indentLevel?: number; // 0 = tâche principale, 1 = sous-tâche indentée
-  subtasks?: TodoSubtask[]; // Rétrocompatibilité
+  durationMinutes?: number; // Durée estimée / associée en minutes (undefined = Sans heure)
+  children?: TodoTask[]; // Sous-tâches réellement imbriquées et rattachées au parent
+  collapsed?: boolean; // État plié/déplié des sous-tâches sur la tâche parente
+  indentLevel?: number; // Legacy (migré automatiquement vers children)
+  subtasks?: TodoSubtask[]; // Legacy (migré automatiquement vers children)
   status: TodoStatus;
   completed?: boolean;
   priority: Priority;
@@ -35,6 +54,11 @@ export interface KanbanCard {
   tag: string;
   color: KanbanCardColor;
   durationMinutes?: number;
+  // Métadonnées pour le tableau Kanban synchronisé avec les Todos
+  todoTaskId?: string;
+  todoListId?: string;
+  priority?: Priority;
+  subtasks?: TodoTask[];
 }
 
 export interface KanbanColumn {
@@ -48,6 +72,7 @@ export interface KanbanBoard {
   title: string;
   createdAt?: number;
   columns: KanbanColumn[];
+  isSystemTodosBoard?: boolean;
 }
 
 export interface KanbanTemplate {
@@ -85,7 +110,21 @@ export const DEFAULT_KANBAN_TEMPLATES: KanbanTemplate[] = [
 ];
 
 export type TimerStatus = 'idle' | 'running' | 'paused' | 'finished';
-export type TimerSoundId = 'chime' | 'marimba' | 'zen' | 'digital' | 'pulse';
+export type TimerSoundId =
+  | 'digital'
+  | 'chime'
+  | 'marimba'
+  | 'zen'
+  | 'pulse'
+  | 'aurora'
+  | 'radar'
+  | 'harp'
+  | 'arcade'
+  | 'bell'
+  | 'kalimba'
+  | 'gong';
+
+export const DEFAULT_TIMER_SOUND_ID: TimerSoundId = 'digital';
 
 export interface TimerItem {
   id: string;
@@ -124,6 +163,12 @@ export const TIMER_SOUNDS: {
   description: string;
 }[] = [
   {
+    id: 'digital',
+    label: 'Bip Digital',
+    file: 'sounds/digital.wav',
+    description: 'Signal court et précis (par défaut)',
+  },
+  {
     id: 'chime',
     label: 'Carillon Cristal',
     file: 'sounds/chime.wav',
@@ -142,16 +187,52 @@ export const TIMER_SOUNDS: {
     description: 'Résonance apaisante 432Hz',
   },
   {
-    id: 'digital',
-    label: 'Bip Digital',
-    file: 'sounds/digital.wav',
-    description: 'Signal court et précis',
-  },
-  {
     id: 'pulse',
     label: 'Pulsation Énergique',
     file: 'sounds/pulse.wav',
     description: 'Mélodie dynamique de fin de sprint',
+  },
+  {
+    id: 'aurora',
+    label: 'Aurore Douce',
+    file: 'sounds/aurora.wav',
+    description: 'Accord éthéré ascendant',
+  },
+  {
+    id: 'radar',
+    label: 'Radar Classique',
+    file: 'sounds/radar.wav',
+    description: 'Bip rythmé façon alarme moderne',
+  },
+  {
+    id: 'harp',
+    label: 'Harpe Céleste',
+    file: 'sounds/harp.wav',
+    description: 'Glissando lumineux apaisant',
+  },
+  {
+    id: 'arcade',
+    label: 'Rétro Arcade',
+    file: 'sounds/arcade.wav',
+    description: 'Fanfare 8-bit dynamique',
+  },
+  {
+    id: 'bell',
+    label: 'Clochette Bureau',
+    file: 'sounds/bell.wav',
+    description: 'Tintement clair et net',
+  },
+  {
+    id: 'kalimba',
+    label: 'Kalimba Solaire',
+    file: 'sounds/kalimba.wav',
+    description: 'Notes douces et boisées',
+  },
+  {
+    id: 'gong',
+    label: 'Gong Profond',
+    file: 'sounds/gong.wav',
+    description: 'Vibration grave de fin de session',
   },
 ];
 
@@ -188,32 +269,30 @@ export const DEFAULT_TODO_LISTS: TodoList[] = [
     tasks: [
       {
         id: 'task_1',
-        text: 'Configurer l\'espace de travail KronoTab',
+        text: "Configurer l'espace de travail KronoTab",
         description: 'Personnaliser le thème Ambre et découvrir les raccourcis rapides.',
         durationMinutes: 25,
-        indentLevel: 0,
         status: 'in_progress',
         completed: false,
         priority: 'high',
         createdAt: Date.now() - 1800_000,
-      },
-      {
-        id: 'task_1_sub1',
-        text: 'Glisser-déposer ou indenter une tâche en sous-tâche',
-        description: 'Utilisez les flèches de retrait ou le glisser-déposer.',
-        durationMinutes: 10,
-        indentLevel: 1,
-        status: 'not_started',
-        completed: false,
-        priority: 'medium',
-        createdAt: Date.now() - 1700_000,
+        collapsed: false,
+        children: [
+          {
+            id: 'task_1_sub1',
+            text: 'Explorer les sous-tâches imbriquées',
+            description: 'Pliez ou dépliez les sous-tâches directement depuis la tâche parente.',
+            status: 'not_started',
+            completed: false,
+            priority: 'medium',
+            createdAt: Date.now() - 1700_000,
+          },
+        ],
       },
       {
         id: 'task_2',
-        text: 'Envoyer une tâche vers le Kanban',
-        description: 'Utiliser le bouton de transfert rapide vers la première colonne.',
-        durationMinutes: 15,
-        indentLevel: 0,
+        text: 'Synchroniser mes tâches avec le Kanban',
+        description: 'Vos tâches apparaissent automatiquement dans le tableau Kanban « Mes Todos ».',
         status: 'not_started',
         completed: false,
         priority: 'medium',
@@ -230,7 +309,6 @@ export const DEFAULT_TODO_LISTS: TodoList[] = [
         text: 'Finaliser la revue de code du sprint',
         description: 'Vérifier les composants React et la synchronisation Chrome Storage.',
         durationMinutes: 45,
-        indentLevel: 0,
         status: 'in_progress',
         completed: false,
         priority: 'high',
@@ -339,7 +417,7 @@ export const DEFAULT_TIMERS: TimerItem[] = [
     remainingSeconds: 30 * 60,
     status: 'idle',
     endTime: null,
-    soundId: 'chime',
+    soundId: 'digital',
     repeatAlarm: true,
     ringing: false,
   },
@@ -350,7 +428,7 @@ export const DEFAULT_TIMERS: TimerItem[] = [
     remainingSeconds: 10 * 60,
     status: 'idle',
     endTime: null,
-    soundId: 'marimba',
+    soundId: 'digital',
     repeatAlarm: false,
     ringing: false,
   },

@@ -190,11 +190,28 @@ function createWavFile(notes, sampleRate = 22050) {
       if (note.type === 'triangle') {
         wave =
           (2 / Math.PI) * Math.asin(Math.sin(2 * Math.PI * note.freq * t));
+      } else if (note.type === 'square') {
+        // Onde carrée douce (harmoniques impaires limitées) pour sonnerie rétro/arcade agréable
+        wave =
+          0.62 * Math.sin(2 * Math.PI * note.freq * t) +
+          0.22 * Math.sin(2 * Math.PI * note.freq * 3 * t) +
+          0.1 * Math.sin(2 * Math.PI * note.freq * 5 * t);
       } else if (note.type === 'bell') {
         wave =
           0.65 * Math.sin(2 * Math.PI * note.freq * t) +
           0.25 * Math.sin(2 * Math.PI * note.freq * 2 * t) +
           0.1 * Math.sin(2 * Math.PI * note.freq * 3.01 * t);
+      } else if (note.type === 'glock') {
+        wave =
+          0.6 * Math.sin(2 * Math.PI * note.freq * t) +
+          0.28 * Math.sin(2 * Math.PI * note.freq * 2.76 * t) * Math.exp(-6 * t) +
+          0.12 * Math.sin(2 * Math.PI * note.freq * 5.4 * t) * Math.exp(-10 * t);
+      } else if (note.type === 'gong') {
+        wave =
+          0.55 * Math.sin(2 * Math.PI * note.freq * t) +
+          0.25 * Math.sin(2 * Math.PI * note.freq * 1.48 * t) +
+          0.12 * Math.sin(2 * Math.PI * note.freq * 2.13 * t) +
+          0.08 * Math.sin(2 * Math.PI * note.freq * 0.5 * t);
       } else {
         wave = Math.sin(2 * Math.PI * note.freq * t);
       }
@@ -229,6 +246,11 @@ function createWavFile(notes, sampleRate = 22050) {
 }
 
 const soundDefinitions = {
+  'digital.wav': [
+    { freq: 880.0, startSec: 0.0, durationSec: 0.12, type: 'sine' },
+    { freq: 880.0, startSec: 0.16, durationSec: 0.12, type: 'sine' },
+    { freq: 1174.66, startSec: 0.34, durationSec: 0.35, type: 'sine' },
+  ],
   'chime.wav': [
     { freq: 523.25, startSec: 0.0, durationSec: 0.45, type: 'bell' },
     { freq: 659.25, startSec: 0.14, durationSec: 0.45, type: 'bell' },
@@ -245,16 +267,51 @@ const soundDefinitions = {
     { freq: 432.0, startSec: 0.0, durationSec: 1.4, type: 'bell', volume: 0.4 },
     { freq: 648.0, startSec: 0.35, durationSec: 1.2, type: 'sine', volume: 0.25 },
   ],
-  'digital.wav': [
-    { freq: 880.0, startSec: 0.0, durationSec: 0.12, type: 'sine' },
-    { freq: 880.0, startSec: 0.16, durationSec: 0.12, type: 'sine' },
-    { freq: 1174.66, startSec: 0.34, durationSec: 0.35, type: 'sine' },
-  ],
   'pulse.wav': [
     { freq: 587.33, startSec: 0.0, durationSec: 0.2, type: 'triangle' },
     { freq: 783.99, startSec: 0.15, durationSec: 0.2, type: 'triangle' },
     { freq: 987.77, startSec: 0.3, durationSec: 0.25, type: 'triangle' },
     { freq: 1174.66, startSec: 0.45, durationSec: 0.6, type: 'bell' },
+  ],
+  'aurora.wav': [
+    { freq: 392.0, startSec: 0.0, durationSec: 0.9, type: 'sine', volume: 0.28 },
+    { freq: 493.88, startSec: 0.14, durationSec: 0.9, type: 'sine', volume: 0.26 },
+    { freq: 587.33, startSec: 0.28, durationSec: 0.95, type: 'bell', volume: 0.28 },
+    { freq: 783.99, startSec: 0.44, durationSec: 1.1, type: 'bell', volume: 0.24 },
+  ],
+  'radar.wav': [
+    { freq: 1046.5, startSec: 0.0, durationSec: 0.1, type: 'square', volume: 0.32 },
+    { freq: 1318.5, startSec: 0.13, durationSec: 0.1, type: 'square', volume: 0.32 },
+    { freq: 1046.5, startSec: 0.26, durationSec: 0.1, type: 'square', volume: 0.32 },
+    { freq: 1318.5, startSec: 0.39, durationSec: 0.26, type: 'square', volume: 0.32 },
+  ],
+  'harp.wav': [
+    { freq: 523.25, startSec: 0.0, durationSec: 0.5, type: 'sine', volume: 0.28 },
+    { freq: 587.33, startSec: 0.07, durationSec: 0.5, type: 'sine', volume: 0.28 },
+    { freq: 659.25, startSec: 0.14, durationSec: 0.5, type: 'sine', volume: 0.28 },
+    { freq: 783.99, startSec: 0.21, durationSec: 0.55, type: 'sine', volume: 0.28 },
+    { freq: 987.77, startSec: 0.28, durationSec: 0.65, type: 'bell', volume: 0.28 },
+    { freq: 1046.5, startSec: 0.36, durationSec: 0.9, type: 'bell', volume: 0.3 },
+  ],
+  'arcade.wav': [
+    { freq: 523.25, startSec: 0.0, durationSec: 0.1, type: 'square', volume: 0.28 },
+    { freq: 659.25, startSec: 0.1, durationSec: 0.1, type: 'square', volume: 0.28 },
+    { freq: 783.99, startSec: 0.2, durationSec: 0.1, type: 'square', volume: 0.28 },
+    { freq: 1046.5, startSec: 0.31, durationSec: 0.35, type: 'square', volume: 0.3 },
+  ],
+  'bell.wav': [
+    { freq: 1567.98, startSec: 0.0, durationSec: 0.75, type: 'glock', volume: 0.38 },
+    { freq: 2093.0, startSec: 0.24, durationSec: 0.85, type: 'glock', volume: 0.34 },
+  ],
+  'kalimba.wav': [
+    { freq: 587.33, startSec: 0.0, durationSec: 0.35, type: 'triangle', volume: 0.36 },
+    { freq: 739.99, startSec: 0.14, durationSec: 0.35, type: 'triangle', volume: 0.34 },
+    { freq: 880.0, startSec: 0.28, durationSec: 0.45, type: 'triangle', volume: 0.34 },
+    { freq: 1174.66, startSec: 0.42, durationSec: 0.65, type: 'triangle', volume: 0.32 },
+  ],
+  'gong.wav': [
+    { freq: 196.0, startSec: 0.0, durationSec: 1.7, type: 'gong', volume: 0.45 },
+    { freq: 293.66, startSec: 0.06, durationSec: 1.4, type: 'bell', volume: 0.2 },
   ],
 };
 

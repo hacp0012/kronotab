@@ -44,7 +44,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.target !== 'offscreen') return;
 
   if (message.type === 'PLAY_ALARM_SOUND') {
-    playSound(message.soundId || 'chime', Boolean(message.loop));
+    playSound(message.soundId || 'digital', Boolean(message.loop));
     sendResponse({ ok: true });
   } else if (message.type === 'STOP_ALARM_SOUND') {
     stopCurrentAudio();

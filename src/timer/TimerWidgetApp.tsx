@@ -21,10 +21,12 @@ import {
   formatSeconds,
   playTimerSound,
   stopAlarmSound,
+  usePersistWindowBounds,
 } from '../shared/windowUtils';
 
 export const TimerWidgetApp: React.FC = () => {
   useTheme();
+  usePersistWindowBounds('timer', true);
 
   const [timers, setTimers] = useChromeStorage<TimerItem[]>(
     'timers',
@@ -417,7 +419,7 @@ export const TimerWidgetApp: React.FC = () => {
 
                 <button
                   type="button"
-                  onClick={() => playTimerSound(activeTimer.soundId || 'chime')}
+                  onClick={() => playTimerSound(activeTimer.soundId || 'digital')}
                   className="p-2 rounded-full bg-md-surface-container hover:bg-md-surface-high text-md-on-surface transition-colors"
                   title={`Tester la sonnerie : ${soundInfo.label}`}
                 >
