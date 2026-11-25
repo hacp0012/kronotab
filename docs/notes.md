@@ -25,9 +25,10 @@ Située au-dessus de la barre d'actions inférieure, elle est divisée en deux z
 - **Structures & insertions** : Liste à puces, Liste numérotée, **Case à cocher classique**, **Case à cocher 3 états (Todo)**, **Timer *inline*** (`[timer:00`), Citation, Ligne séparatrice.
 - **Couleurs et nettoyage** : **Couleur du texte**, **Surligneur (marqueur)** et **Annuler la mise en forme** (Clear formatting).
 - **Indicateur de taille de police** (`13px` par défaut) : cliquez dessus pour réinitialiser rapidement la taille par défaut.
-- **Paramètres d'édition (`⚙`, à l'extrême droite)** : ouvre un menu regroupant :
+- **Paramètres d'édition (`⚙`, à l'extrême droite — mémorisés par note)** : ouvre un menu regroupant :
   - **Retour à la ligne (*Word Wrap*)** : interrupteur pour activer ou désactiver le retour à la ligne automatique (avec défilement horizontal lorsqu'il est désactivé).
   - **Vérification orthographique (*Orthographe*)** : correcteur intégré **100 % hors-ligne** (indépendant des réglages Chrome) avec interrupteur d'activation et sélecteur de langue (**Français** ou **Anglais**). Les fautes sont soulignées en rouge ondulé ; un **clic** ou un **clic droit** sur un mot souligné ouvre un menu de suggestions de correction ainsi qu'une option pour **ignorer** le mot (réinitialisable depuis le sous-menu *Orthographe*).
+  - **Persistance individuelle** : la taille de police, le retour à la ligne, l'état et la langue du correcteur orthographique ainsi que les mots ignorés sont conservés **indépendamment pour chaque note**.
 
 ---
 
@@ -86,7 +87,7 @@ Vous pouvez intégrer directement un minuteur cliquable au milieu de n'importe q
 | **`Ctrl -`** | Diminuer la taille de la police (`-1 px`, jusqu'à `10 px`) |
 | **`Ctrl 0`** | Réinitialiser la taille de la police à `13 px` |
 
-La taille choisie est mémorisée automatiquement.
+La taille choisie est mémorisée automatiquement pour chaque note.
 
 ### Suivi automatique du curseur
 Si vous faites défiler une longue note vers le haut ou vers le bas et que votre curseur sort de la zone visible, l'affichage **défile automatiquement jusqu'au curseur** dès que vous reprenez la saisie ou déplacez le curseur au clavier, en tenant compte de la barre d'outils en bas de l'écran.

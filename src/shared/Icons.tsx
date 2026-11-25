@@ -460,5 +460,74 @@ export const IconTriStateCheckbox: React.FC<IconProps> = (props) => (
   </BaseSvg>
 );
 
+export const IconUser: React.FC<IconProps> = (props) => (
+  <BaseSvg {...props}>
+    <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+    <circle cx="12" cy="7" r="4" />
+  </BaseSvg>
+);
+
+export const IconCamera: React.FC<IconProps> = (props) => (
+  <BaseSvg {...props}>
+    <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
+    <circle cx="12" cy="13" r="3" />
+  </BaseSvg>
+);
+
+export const IconLogOut: React.FC<IconProps> = (props) => (
+  <BaseSvg {...props}>
+    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+    <polyline points="16 17 21 12 16 7" />
+    <line x1="21" x2="9" y1="12" y2="12" />
+  </BaseSvg>
+);
+
+export const IconEye: React.FC<IconProps> = (props) => (
+  <BaseSvg {...props}>
+    <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+    <circle cx="12" cy="12" r="3" />
+  </BaseSvg>
+);
+
+export const IconEyeOff: React.FC<IconProps> = (props) => (
+  <BaseSvg {...props}>
+    <path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49" />
+    <path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" />
+    <path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143" />
+    <path d="m2 2 20 20" />
+  </BaseSvg>
+);
+
+export const IconKey: React.FC<IconProps> = (props) => (
+  <BaseSvg {...props}>
+    <path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4" />
+    <path d="m21 2-9.6 9.6" />
+    <circle cx="7.5" cy="15.5" r="5.5" />
+  </BaseSvg>
+);
+
+export const IconUpload: React.FC<IconProps> = (props) => (
+  <BaseSvg {...props}>
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+    <polyline points="17 8 12 3 7 8" />
+    <line x1="12" x2="12" y1="3" y2="15" />
+  </BaseSvg>
+);
+
+export const IconCloud: React.FC<IconProps> = (props) => (
+  <BaseSvg {...props}>
+    <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />
+  </BaseSvg>
+);
+
+export const IconRefresh: React.FC<IconProps> = (props) => (
+  <BaseSvg {...props}>
+    <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+    <path d="M3 3v5h5" />
+    <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+    <path d="M16 16h5v5" />
+  </BaseSvg>
+);
+
 
 

@@ -15,6 +15,7 @@ export default defineConfig({
         sidepanel: resolve(__dirname, 'sidepanel.html'),
         kanban: resolve(__dirname, 'kanban.html'),
         timer: resolve(__dirname, 'timer.html'),
+        account: resolve(__dirname, 'account.html'),
         offscreen: resolve(__dirname, 'offscreen.html'),
         background: resolve(__dirname, 'src/background.ts'),
       },

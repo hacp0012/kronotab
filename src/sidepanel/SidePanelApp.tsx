@@ -39,6 +39,7 @@ import {
   IconSearch,
   IconTimer,
   IconTrash,
+  IconUser,
   IconVolume,
 } from '../shared/Icons';
 import { Modal } from '../shared/Modal';
@@ -48,14 +49,18 @@ import {
   DEFAULT_KANBANS,
   DEFAULT_NOTES,
   DEFAULT_NOTE_EDITOR_SETTINGS,
+  DEFAULT_NOTE_FONT_SIZE,
   DEFAULT_TIMERS,
   DEFAULT_TIMER_SOUND_ID,
   DEFAULT_TODO_LISTS,
+  DEFAULT_ZENBASE_CONFIG,
+  DEFAULT_ZENBASE_SYNC_STATE,
   KanbanBoard,
   NoteEditorSettings,
   NoteItem,
   NoteSpellCheckLang,
   Priority,
+  StoredAuthSession,
   TIMER_SOUNDS,
   TODOS_KANBAN_BOARD_ID,
   TimerItem,
@@ -63,6 +68,7 @@ import {
   TodoList,
   TodoStatus,
   TodoTask,
+  ZenbaseSyncState,
 } from '../shared/types';
 import { useChromeStorage } from '../shared/useChromeStorage';
 import { useClickOutside } from '../shared/useClickOutside';
@@ -70,6 +76,7 @@ import { CHROME_ACCENTS, useTheme } from '../shared/useTheme';
 import {
   detectIsChromeSidePanel,
   formatSeconds,
+  openAccountWindow,
   openFloatingTimerWindow,
   openKanbanWindow,
   openStandaloneAppWindow,
@@ -84,6 +91,10 @@ import {
   insertInlineTimerDraftAtSelection,
 } from './RichNoteEditor';
 import { NotesFormatToolbar } from './NotesFormatToolbar';
+import {
+  getUserInitials,
+  refreshZenbaseSession,
+} from '../shared/zenbaseClient';
 import {
   spellcheckClient,
   SpellCheckEngineStatus,
@@ -299,50 +310,64 @@ export const SidePanelApp: React.FC = () => {
     'activeNoteId',
     DEFAULT_NOTES[0].id
   );
-  const [noteFontSize, setNoteFontSize] = useChromeStorage<number>(
+  // Fallbacks historiques pour les notes créées avant les paramètres par note
+  const [legacyNoteFontSize] = useChromeStorage<number>(
     'noteFontSize',
-    13
+    DEFAULT_NOTE_FONT_SIZE
   );
-  const [noteEditorSettings, setNoteEditorSettings] =
-    useChromeStorage<NoteEditorSettings>(
-      'noteEditorSettings',
-      DEFAULT_NOTE_EDITOR_SETTINGS
-    );
-  const [noteSpellIgnoredWords, setNoteSpellIgnoredWords] =
-    useChromeStorage<string[]>('noteSpellCheckIgnoredWords', []);
+  const [legacyNoteEditorSettings] = useChromeStorage<NoteEditorSettings>(
+    'noteEditorSettings',
+    DEFAULT_NOTE_EDITOR_SETTINGS
+  );
+  const [legacyNoteSpellIgnoredWords] = useChromeStorage<string[]>(
+    'noteSpellCheckIgnoredWords',
+    []
+  );
   const [spellCheckStatus, setSpellCheckStatus] =
     useState<SpellCheckEngineStatus>(() =>
       spellcheckClient.getStatus(DEFAULT_NOTE_EDITOR_SETTINGS.spellCheckLang)
     );
 
-  // Synchronise le statut du moteur orthographique intégré et précharge le dictionnaire actif sur l'onglet Notes
-  useEffect(() => {
-    const lang = noteEditorSettings.spellCheckLang;
-    setSpellCheckStatus(spellcheckClient.getStatus(lang));
-    const unsubscribe = spellcheckClient.subscribe(() => {
-      setSpellCheckStatus(spellcheckClient.getStatus(lang));
-    });
-    if (activeTab === 'notes' && noteEditorSettings.spellCheck) {
-      void spellcheckClient.preload(lang);
-    }
-    return unsubscribe;
-  }, [activeTab, noteEditorSettings.spellCheck, noteEditorSettings.spellCheckLang]);
-
-  const handleIgnoreSpellWord = useCallback(
-    (word: string) => {
-      const normalized = word.trim().toLowerCase();
-      if (!normalized) return;
-      setNoteSpellIgnoredWords((prev) =>
-        prev.includes(normalized) ? prev : [...prev, normalized]
-      );
-    },
-    [setNoteSpellIgnoredWords]
+  // Authentification et profil utilisateur Zenbase (synchronisé avec la fenêtre flottante Compte)
+  const [authSession, setAuthSession, authSessionLoaded] =
+    useChromeStorage<StoredAuthSession | null>('zenbaseAuthSession', null);
+  const [zenbaseSyncState] = useChromeStorage<ZenbaseSyncState>(
+    'zenbaseSyncState',
+    DEFAULT_ZENBASE_SYNC_STATE
   );
+  const [avatarImgFailed, setAvatarImgFailed] = useState<boolean>(false);
+  const authVerifiedTokenRef = useRef<string | null>(null);
 
-  const handleResetIgnoredSpellWords = useCallback(() => {
-    setNoteSpellIgnoredWords([]);
-    showToast('Mots ignorés réinitialisés.');
-  }, [setNoteSpellIgnoredWords]);
+  useEffect(() => {
+    setAvatarImgFailed(false);
+  }, [authSession?.profile?.avatar_url]);
+
+  // Vérification silencieuse de la session Zenbase + synchro pull à l'ouverture
+  useEffect(() => {
+    if (!authSessionLoaded || !authSession?.token) return;
+    if (authVerifiedTokenRef.current === authSession.token) return;
+    authVerifiedTokenRef.current = authSession.token;
+
+    let cancelled = false;
+    void refreshZenbaseSession(DEFAULT_ZENBASE_CONFIG, authSession).then(
+      (res) => {
+        if (cancelled) return;
+        if (res.unauthorized) {
+          setAuthSession(null);
+        } else if (res.session && !res.unreachable) {
+          setAuthSession(res.session);
+          if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+            chrome.runtime
+              .sendMessage({ type: 'ZENBASE_SYNC_NOW', manual: false })
+              .catch(() => {});
+          }
+        }
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [authSessionLoaded, authSession, setAuthSession]);
 
   // Migration transparente des anciennes sous-tâches à plat en vraies sous-tâches imbriquées (`children`)
   useEffect(() => {
@@ -548,6 +573,119 @@ export const SidePanelApp: React.FC = () => {
   const currentNote = useMemo(() => {
     return notes.find((n) => n.id === activeNoteId) || notes[0] || null;
   }, [notes, activeNoteId]);
+
+  // Paramètres d'édition propres à la note active (avec repli sur les valeurs historiques pour les anciennes notes)
+  const currentNoteFontSize = useMemo(() => {
+    if (typeof currentNote?.fontSize === 'number') {
+      return currentNote.fontSize;
+    }
+    return legacyNoteFontSize;
+  }, [currentNote?.fontSize, legacyNoteFontSize]);
+
+  const currentNoteEditorSettings: NoteEditorSettings = useMemo(() => {
+    return {
+      ...DEFAULT_NOTE_EDITOR_SETTINGS,
+      ...legacyNoteEditorSettings,
+      ...(currentNote?.editorSettings || {}),
+    };
+  }, [currentNote?.editorSettings, legacyNoteEditorSettings]);
+
+  const currentNoteIgnoredWords: string[] = useMemo(() => {
+    if (Array.isArray(currentNote?.ignoredSpellWords)) {
+      return currentNote.ignoredSpellWords;
+    }
+    return legacyNoteSpellIgnoredWords;
+  }, [currentNote?.ignoredSpellWords, legacyNoteSpellIgnoredWords]);
+
+  // Synchronise le statut du moteur orthographique intégré et précharge le dictionnaire de la note active
+  useEffect(() => {
+    const lang = currentNoteEditorSettings.spellCheckLang;
+    setSpellCheckStatus(spellcheckClient.getStatus(lang));
+    const unsubscribe = spellcheckClient.subscribe(() => {
+      setSpellCheckStatus(spellcheckClient.getStatus(lang));
+    });
+    if (activeTab === 'notes' && currentNoteEditorSettings.spellCheck) {
+      void spellcheckClient.preload(lang);
+    }
+    return unsubscribe;
+  }, [
+    activeTab,
+    currentNoteEditorSettings.spellCheck,
+    currentNoteEditorSettings.spellCheckLang,
+  ]);
+
+  const handleChangeCurrentNoteFontSize = useCallback(
+    (updater: number | ((prev: number) => number)) => {
+      if (!currentNote) return;
+      const targetId = currentNote.id;
+      setNotes((prev) =>
+        prev.map((n) => {
+          if (n.id !== targetId) return n;
+          const prevSize =
+            typeof n.fontSize === 'number' ? n.fontSize : legacyNoteFontSize;
+          const nextSize =
+            typeof updater === 'function' ? updater(prevSize) : updater;
+          return { ...n, fontSize: nextSize };
+        })
+      );
+    },
+    [currentNote, legacyNoteFontSize, setNotes]
+  );
+
+  const handleUpdateCurrentNoteEditorSettings = useCallback(
+    (updater: (prev: NoteEditorSettings) => NoteEditorSettings) => {
+      if (!currentNote) return;
+      const targetId = currentNote.id;
+      setNotes((prev) =>
+        prev.map((n) => {
+          if (n.id !== targetId) return n;
+          const prevSettings: NoteEditorSettings = {
+            ...DEFAULT_NOTE_EDITOR_SETTINGS,
+            ...legacyNoteEditorSettings,
+            ...(n.editorSettings || {}),
+          };
+          return {
+            ...n,
+            editorSettings: updater(prevSettings),
+          };
+        })
+      );
+    },
+    [currentNote, legacyNoteEditorSettings, setNotes]
+  );
+
+  const handleIgnoreSpellWord = useCallback(
+    (word: string) => {
+      const normalized = word.trim().toLowerCase();
+      if (!normalized || !currentNote) return;
+      const targetId = currentNote.id;
+      setNotes((prev) =>
+        prev.map((n) => {
+          if (n.id !== targetId) return n;
+          const existing = Array.isArray(n.ignoredSpellWords)
+            ? n.ignoredSpellWords
+            : legacyNoteSpellIgnoredWords;
+          if (existing.includes(normalized)) return n;
+          return {
+            ...n,
+            ignoredSpellWords: [...existing, normalized],
+          };
+        })
+      );
+    },
+    [currentNote, legacyNoteSpellIgnoredWords, setNotes]
+  );
+
+  const handleResetIgnoredSpellWords = useCallback(() => {
+    if (!currentNote) return;
+    const targetId = currentNote.id;
+    setNotes((prev) =>
+      prev.map((n) =>
+        n.id === targetId ? { ...n, ignoredSpellWords: [] } : n
+      )
+    );
+    showToast('Mots ignorés de cette note réinitialisés.');
+  }, [currentNote, setNotes]);
 
   const sortedFilteredNotes = useMemo(() => {
     const q = noteSearchQuery.trim().toLowerCase();
@@ -1604,6 +1742,9 @@ export const SidePanelApp: React.FC = () => {
       pinned: false,
       color: 'default',
       updatedAt: Date.now(),
+      fontSize: DEFAULT_NOTE_FONT_SIZE,
+      editorSettings: { ...DEFAULT_NOTE_EDITOR_SETTINGS },
+      ignoredSpellWords: [],
     };
     setNotes((prev) => [newNote, ...prev]);
     setActiveNoteId(newNote.id);
@@ -1912,6 +2053,80 @@ export const SidePanelApp: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-1.5 relative shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setShowOptionsMenu(false);
+                setShowThemePicker(false);
+                setShowSectionNavMenu(false);
+                void openAccountWindow();
+              }}
+              aria-label={
+                authSession
+                  ? `Profil (${authSession.profile?.display_name || authSession.user.email})`
+                  : 'Ouvrir la fenêtre Compte & Connexion'
+              }
+              title={
+                authSession
+                  ? `Compte : ${authSession.profile?.display_name || authSession.user.email} (${
+                      zenbaseSyncState.status === 'syncing'
+                        ? 'Synchronisation…'
+                        : zenbaseSyncState.status === 'offline'
+                        ? 'Hors-ligne'
+                        : zenbaseSyncState.status === 'paused'
+                        ? 'Synchro en pause'
+                        : zenbaseSyncState.status === 'error'
+                        ? `Erreur synchro : ${zenbaseSyncState.lastError || ''}`
+                        : 'Synchronisé'
+                    })`
+                  : 'Compte & Connexion (fenêtre flottante)'
+              }
+              className={`relative h-8 w-8 rounded-full flex items-center justify-center transition-colors shrink-0 ${
+                authSession
+                  ? 'bg-md-primary-container text-md-on-primary-container hover:opacity-90'
+                  : 'bg-md-surface-container hover:bg-md-surface-high text-md-on-surface'
+              }`}
+            >
+              {authSession ? (
+                <>
+                  {authSession.profile?.avatar_url && !avatarImgFailed ? (
+                    <img
+                      src={authSession.profile.avatar_url}
+                      alt={
+                        authSession.profile.display_name ||
+                        authSession.user.email
+                      }
+                      onError={() => setAvatarImgFailed(true)}
+                      className="w-full h-full rounded-full object-cover"
+                    />
+                  ) : (
+                    <span className="text-[11px] font-bold leading-none">
+                      {getUserInitials(
+                        authSession.profile?.display_name,
+                        authSession.user.email
+                      )}
+                    </span>
+                  )}
+                  <span
+                    aria-hidden="true"
+                    className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-md-surface ${
+                      zenbaseSyncState.status === 'syncing'
+                        ? 'bg-amber-400 animate-pulse'
+                        : zenbaseSyncState.status === 'error'
+                        ? 'bg-rose-500'
+                        : zenbaseSyncState.status === 'offline'
+                        ? 'bg-amber-500'
+                        : zenbaseSyncState.status === 'paused'
+                        ? 'bg-md-on-surface-variant'
+                        : 'bg-emerald-500'
+                    }`}
+                  />
+                </>
+              ) : (
+                <IconUser size={15} />
+              )}
+            </button>
+
             <button
               ref={themeButtonRef}
               type="button"
@@ -3419,8 +3634,12 @@ export const SidePanelApp: React.FC = () => {
             <input
               type="text"
               value={currentNote.title}
-              spellCheck={noteEditorSettings.spellCheck}
-              lang={noteEditorSettings.spellCheckLang === 'en' ? 'en-US' : 'fr-FR'}
+              spellCheck={currentNoteEditorSettings.spellCheck}
+              lang={
+                currentNoteEditorSettings.spellCheckLang === 'en'
+                  ? 'en-US'
+                  : 'fr-FR'
+              }
               onChange={(e) =>
                 handleUpdateCurrentNote({ title: e.target.value })
               }
@@ -3432,14 +3651,14 @@ export const SidePanelApp: React.FC = () => {
               key={currentNote.id}
               noteId={currentNote.id}
               initialHtml={currentNote.content}
-              fontSize={noteFontSize}
-              wordWrap={noteEditorSettings.wordWrap}
-              spellCheck={noteEditorSettings.spellCheck}
-              spellCheckLang={noteEditorSettings.spellCheckLang}
-              ignoredWords={noteSpellIgnoredWords}
+              fontSize={currentNoteFontSize}
+              wordWrap={currentNoteEditorSettings.wordWrap}
+              spellCheck={currentNoteEditorSettings.spellCheck}
+              spellCheckLang={currentNoteEditorSettings.spellCheckLang}
+              ignoredWords={currentNoteIgnoredWords}
               editorRef={editorRef}
               onChangeHtml={(html) => handleUpdateCurrentNote({ content: html })}
-              onChangeFontSize={setNoteFontSize}
+              onChangeFontSize={handleChangeCurrentNoteFontSize}
               onTriggerTimerTag={handleStartTimerFromNote}
               onIgnoreSpellWord={handleIgnoreSpellWord}
             />
@@ -3510,10 +3729,10 @@ export const SidePanelApp: React.FC = () => {
 
             {/* Ligne 1 : Barre de formatage responsive avec menu de débordement + paramètres d'édition */}
             <NotesFormatToolbar
-              noteFontSize={noteFontSize}
-              editorSettings={noteEditorSettings}
+              noteFontSize={currentNoteFontSize}
+              editorSettings={currentNoteEditorSettings}
               spellCheckStatus={spellCheckStatus}
-              ignoredWordsCount={noteSpellIgnoredWords.length}
+              ignoredWordsCount={currentNoteIgnoredWords.length}
               showTextColorMenu={showTextColorMenu}
               showHighlightMenu={showHighlightMenu}
               textColorButtonRef={textColorButtonRef}
@@ -3546,7 +3765,9 @@ export const SidePanelApp: React.FC = () => {
                   'Saisissez la durée puis « ] » pour valider le timer (ex: [timer:25] ou [timer:05:30]).'
                 );
               }}
-              onResetFontSize={() => setNoteFontSize(13)}
+              onResetFontSize={() =>
+                handleChangeCurrentNoteFontSize(DEFAULT_NOTE_FONT_SIZE)
+              }
               onToggleTextColorMenu={() => {
                 setShowTextColorMenu((prev) => !prev);
                 setShowHighlightMenu(false);
@@ -3557,19 +3778,19 @@ export const SidePanelApp: React.FC = () => {
               }}
               onClearFormatting={handleClearFormatting}
               onToggleWordWrap={() =>
-                setNoteEditorSettings((prev) => ({
+                handleUpdateCurrentNoteEditorSettings((prev) => ({
                   ...prev,
                   wordWrap: !prev.wordWrap,
                 }))
               }
               onToggleSpellCheck={() =>
-                setNoteEditorSettings((prev) => ({
+                handleUpdateCurrentNoteEditorSettings((prev) => ({
                   ...prev,
                   spellCheck: !prev.spellCheck,
                 }))
               }
               onChangeSpellCheckLang={(lang: NoteSpellCheckLang) =>
-                setNoteEditorSettings((prev) => ({
+                handleUpdateCurrentNoteEditorSettings((prev) => ({
                   ...prev,
                   spellCheckLang: lang,
                 }))

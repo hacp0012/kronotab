@@ -15,12 +15,14 @@ const DEFAULT_WINDOW_BOUNDS: Record<ManagedWindowKey, WindowBounds> = {
   standalone: { width: 435, height: 820 },
   kanban: { width: 1150, height: 760 },
   timer: { width: 330, height: 420 },
+  account: { width: 380, height: 540 },
 };
 
 const MIN_WINDOW_BOUNDS: Record<ManagedWindowKey, WindowBounds> = {
   standalone: { width: 320, height: 420 },
   kanban: { width: 520, height: 420 },
   timer: { width: 250, height: 300 },
+  account: { width: 320, height: 420 },
 };
 
 const clampBounds = (
@@ -445,6 +447,48 @@ export const openFloatingTimerWindow = async (
     height: saved.height,
     left: 80,
     top: 80,
+  });
+};
+
+/**
+ * Ouvre la fenêtre flottante dédiée à l'authentification, au profil utilisateur
+ * et aux paramètres du compte (`account.html`), ou lui redonne le focus si déjà ouverte.
+ */
+export const openAccountWindow = async (): Promise<void> => {
+  const saved =
+    (await getSavedWindowBounds('account')) || DEFAULT_WINDOW_BOUNDS.account;
+
+  if (typeof chrome === 'undefined' || !chrome.windows || !chrome.runtime) {
+    window.open(
+      '/account.html',
+      '_blank',
+      `width=${saved.width},height=${saved.height}`
+    );
+    return;
+  }
+
+  const accountUrl = chrome.runtime.getURL('account.html');
+  const windows = await chrome.windows.getAll({ populate: true });
+
+  const existingWindow = windows.find((win) =>
+    win.tabs?.some((tab) => tab.url?.startsWith(accountUrl))
+  );
+
+  if (existingWindow && existingWindow.id !== undefined) {
+    await chrome.windows.update(existingWindow.id, {
+      focused: true,
+      drawAttention: true,
+    });
+    return;
+  }
+
+  await chrome.windows.create({
+    url: accountUrl,
+    type: 'popup',
+    width: saved.width,
+    height: saved.height,
+    left: 160,
+    top: 90,
   });
 };
 

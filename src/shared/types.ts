@@ -1,7 +1,7 @@
 export type Priority = 'low' | 'medium' | 'high';
 export type TodoStatus = 'not_started' | 'in_progress' | 'completed';
 
-export type ManagedWindowKey = 'standalone' | 'kanban' | 'timer';
+export type ManagedWindowKey = 'standalone' | 'kanban' | 'timer' | 'account';
 
 export interface WindowBounds {
   width: number;
@@ -139,15 +139,6 @@ export interface TimerItem {
   isTemporary?: boolean;
 }
 
-export interface NoteItem {
-  id: string;
-  title: string;
-  content: string; // Contenu riche HTML
-  pinned: boolean;
-  color: KanbanCardColor | 'default';
-  updatedAt: number;
-}
-
 export type NoteSpellCheckLang = 'fr' | 'en';
 
 export interface NoteEditorSettings {
@@ -156,11 +147,25 @@ export interface NoteEditorSettings {
   spellCheckLang: NoteSpellCheckLang;
 }
 
+export const DEFAULT_NOTE_FONT_SIZE = 13;
+
 export const DEFAULT_NOTE_EDITOR_SETTINGS: NoteEditorSettings = {
   wordWrap: true,
   spellCheck: true,
   spellCheckLang: 'fr',
 };
+
+export interface NoteItem {
+  id: string;
+  title: string;
+  content: string; // Contenu riche HTML
+  pinned: boolean;
+  color: KanbanCardColor | 'default';
+  updatedAt: number;
+  fontSize?: number;
+  editorSettings?: NoteEditorSettings;
+  ignoredSpellWords?: string[];
+}
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 export type ChromeAccent = 'amber' | 'blue' | 'indigo' | 'emerald' | 'violet' | 'rose';
@@ -169,6 +174,81 @@ export interface ThemeSettings {
   mode: ThemeMode;
   accent: ChromeAccent;
 }
+
+export interface ZenbaseConnectionConfig {
+  endpoint: string;
+  apiKey: string;
+}
+
+export interface ZenbaseUserProfile {
+  user_id: string;
+  email: string;
+  display_name: string;
+  avatar_url: string | null;
+  avatar_file_id: string | null;
+  updated_at: string;
+}
+
+export interface StoredAuthSession {
+  token: string;
+  user: {
+    id: string;
+    email: string;
+    auth_method: string;
+    is_blocked: boolean;
+    created_at: string;
+    updated_at?: string;
+  };
+  profile: ZenbaseUserProfile | null;
+}
+
+export const DEFAULT_ZENBASE_CONFIG: ZenbaseConnectionConfig = {
+  endpoint:
+    (import.meta as unknown as { env?: Record<string, string | undefined> })
+      .env?.VITE_ZENBASE_ENDPOINT || 'http://127.0.0.1:8000',
+  apiKey:
+    (import.meta as unknown as { env?: Record<string, string | undefined> })
+      .env?.VITE_ZENBASE_API_KEY || '',
+};
+
+export type SyncDomain =
+  | 'notes'
+  | 'todos'
+  | 'kanbans'
+  | 'timers'
+  | 'preferences';
+
+export type ZenbaseSyncStatus =
+  | 'idle'
+  | 'syncing'
+  | 'synced'
+  | 'offline'
+  | 'paused'
+  | 'error';
+
+export interface ZenbaseSyncSettings {
+  autoSync: boolean;
+}
+
+export const DEFAULT_ZENBASE_SYNC_SETTINGS: ZenbaseSyncSettings = {
+  autoSync: true,
+};
+
+export interface ZenbaseSyncState {
+  status: ZenbaseSyncStatus;
+  lastSyncedAt: number | null;
+  lastError: string | null;
+  pendingDomains: SyncDomain[];
+  userId: string | null;
+}
+
+export const DEFAULT_ZENBASE_SYNC_STATE: ZenbaseSyncState = {
+  status: 'idle',
+  lastSyncedAt: null,
+  lastError: null,
+  pendingDomains: [],
+  userId: null,
+};
 
 export const TIMER_SOUNDS: {
   id: TimerSoundId;

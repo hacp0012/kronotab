@@ -33,6 +33,7 @@ Chaque fenêtre flottante de KronoTab mémorise automatiquement ses dimensions d
 - **Fenêtre principale indépendante** (`435 × 820 px` par défaut)
 - **Fenêtre Kanban** (`1150 × 760 px` par défaut)
 - **Fenêtre flottante du Minuteur circulaire** (`330 × 420 px` par défaut)
+- **Fenêtre flottante Compte & Profil** (`380 × 540 px` par défaut)
 
 À chaque réouverture, la fenêtre retrouve exactement la largeur et la hauteur que vous aviez choisies.
 
@@ -85,6 +86,22 @@ Cliquez sur le bouton **`Kanban ↗`** dans l'en-tête pour ouvrir la fenêtre M
 - **Cartes** : glissez-déposez les cartes entre colonnes ou pour les réordonner, cliquez sur l'icône chronomètre pour lancer un Focus Timer éphémère, ou survolez une carte pour la modifier / supprimer.
 - **Colonnes** *(tableaux personnalisés)* : glissez l'en-tête d'une colonne pour la déplacer, double-cliquez sur son titre pour la renommer, ou ajoutez de nouvelles colonnes.
 - **Navigation panoramique (*Drag-to-Scroll*)** : cliquez-glissez sur l'arrière-plan du tableau pour faire défiler horizontalement les colonnes avec fluidité.
+
+---
+
+## 6. Compte et profil utilisateur (Fenêtre flottante dédiée)
+
+Un bouton dédié dans la barre d'application (*AppBar*, icône utilisateur ou photo de profil une fois connecté) ouvre une **fenêtre flottante dédiée** (`account.html`) au compte et au profil, synchronisée en temps réel avec toutes les fenêtres KronoTab :
+
+- **Connexion** : par **e-mail + mot de passe** ou par **code OTP à 6 chiffres** reçu par e-mail.
+- **Inscription** : création d'un compte avec possibilité d'ajouter directement un **nom d'affichage** et une **photo de profil** (téléversée dans Zenbase Storage et optimisée automatiquement avant l'envoi).
+- **Profil & Sécurité** : une fois connecté, gérez votre **photo de profil** (ajouter, changer ou retirer), votre **nom d'affichage**, votre **mot de passe** et votre session (**Se déconnecter**) dans une interface Material 3 compacte sans bordure.
+- **Synchronisation bidirectionnelle automatique (onglet *Synchro*)** : dès que vous êtes connecté, un moteur en arrière-plan synchronise automatiquement votre compte entre le stockage local et **Zenbase** (push automatique après modification, récupération à l'ouverture et toutes les minutes, plus un bouton **« Synchroniser maintenant »**) :
+  - **Données synchronisées** : **Notes** (contenu et paramètres par note), **Todos** (listes, tâches et sous-tâches), **Tableaux Kanban & modèles**, **Timers enregistrés** *(hors minuteurs éphémères)* et **Préférences UI** (thème, couleur d'accent, barre d'onglets).
+  - **Fusion intelligente & isolation entre comptes** :
+    - Premier compte sur un navigateur hors-ligne ou reconnexion au **même compte** : fusion intelligente par identifiant et horodatage le plus récent (avec suivi des suppressions), sans perte de données.
+    - Connexion à un **compte différent** (*Compte A* → *Compte B*) : isolation stricte — aucune donnée du compte précédent n'est fusionnée ni conservée en cache local ; l'espace local est directement remplacé par les données cloud du nouveau compte (ou réinitialisé proprement si le compte est neuf).
+  - **Déconnexion sûre** : la déconnexion met en pause la synchronisation et conserve vos données en local pour continuer hors-ligne (sans cache séparé par compte).
 
 ---
 

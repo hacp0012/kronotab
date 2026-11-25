@@ -5,14 +5,46 @@ import {
   DEFAULT_THEME_SETTINGS,
   DEFAULT_TIMERS,
   DEFAULT_TODO_LISTS,
+  DEFAULT_ZENBASE_SYNC_SETTINGS,
+  DEFAULT_ZENBASE_SYNC_STATE,
+  StoredAuthSession,
+  SyncDomain,
   TODOS_KANBAN_BOARD_ID,
   TimerItem,
   TimerSoundId,
+  ZenbaseSyncSettings,
 } from './shared/types';
+import {
+  SYNCED_STORAGE_KEYS,
+  SYNC_META_KEY,
+  SYNC_SETTINGS_KEY,
+  SYNC_STATE_KEY,
+  SyncedStorageKey,
+  computeDomainHash,
+  normalizeSyncMeta,
+  readSyncSettings,
+  recordLocalStorageDiff,
+  runBidirectionalSync,
+  storageKeyToDomain,
+  writeSyncState,
+} from './shared/zenbaseSyncEngine';
 
 export const ALARM_PREFIX = 'kronotab_timer_';
 export const BADGE_TICK_ALARM = 'kronotab_badge_tick';
 export const NOTIF_PREFIX = 'kronotab_notif__';
+export const ZENBASE_SYNC_ALARM = 'kronotab_zenbase_sync';
+export const ZENBASE_SYNC_PUSH_ALARM = 'kronotab_zenbase_sync_push';
+
+const AUTH_SESSION_KEY = 'zenbaseAuthSession';
+const SYNC_DEBOUNCE_MS = 1500;
+const SYNC_PERIOD_MINUTES = 1;
+
+let isApplyingRemoteWrite = false;
+let suppressRemoteEchoUntil = 0;
+let isSyncInFlight = false;
+let syncQueued = false;
+let pushDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+const pendingDirtyDomains = new Set<SyncDomain>();
 
 // 1. Ouvrir directement le Side Panel au clic sur l'icône de l'extension
 if (typeof chrome !== 'undefined' && chrome.sidePanel) {
@@ -199,6 +231,11 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     return;
   }
 
+  if (alarm.name === ZENBASE_SYNC_ALARM || alarm.name === ZENBASE_SYNC_PUSH_ALARM) {
+    void triggerZenbaseSync({ manual: false });
+    return;
+  }
+
   if (alarm.name.startsWith(ALARM_PREFIX)) {
     const timerId = alarm.name.replace(ALARM_PREFIX, '');
     finalizeExpiredTimer(timerId);
@@ -319,3 +356,388 @@ function finalizeExpiredTimer(timerId: string): void {
     }
   });
 }
+
+// ============================================================================
+// 7. Moteur centralisé de synchronisation bidirectionnelle Zenbase
+// ============================================================================
+
+async function getStoredAuthSession(): Promise<StoredAuthSession | null> {
+  const res = await chrome.storage.local.get([AUTH_SESSION_KEY]);
+  const raw = res[AUTH_SESSION_KEY] as StoredAuthSession | null | undefined;
+  return raw && raw.token && raw.user?.id ? raw : null;
+}
+
+async function ensurePeriodicSyncAlarm(enabled: boolean): Promise<void> {
+  if (!chrome.alarms) return;
+  if (!enabled) {
+    await chrome.alarms.clear(ZENBASE_SYNC_ALARM);
+    await chrome.alarms.clear(ZENBASE_SYNC_PUSH_ALARM);
+    return;
+  }
+  const existing = await chrome.alarms.get(ZENBASE_SYNC_ALARM);
+  if (!existing) {
+    chrome.alarms.create(ZENBASE_SYNC_ALARM, {
+      periodInMinutes: SYNC_PERIOD_MINUTES,
+    });
+  }
+}
+
+function scheduleDebouncedSyncPush(): void {
+  if (pushDebounceTimer !== null) {
+    clearTimeout(pushDebounceTimer);
+  }
+  pushDebounceTimer = setTimeout(() => {
+    pushDebounceTimer = null;
+    void triggerZenbaseSync({ manual: false });
+  }, SYNC_DEBOUNCE_MS);
+
+  // Sécurité MV3 : si le service worker se met en veille avant le timeout, l'alarme prend le relais
+  if (chrome.alarms) {
+    chrome.alarms.create(ZENBASE_SYNC_PUSH_ALARM, {
+      when: Date.now() + 30_000,
+    });
+  }
+}
+
+async function triggerZenbaseSync(options: {
+  manual?: boolean;
+}): Promise<{
+  ok: boolean;
+  error: string | null;
+  pulledDomains: SyncDomain[];
+  pushedDomains: SyncDomain[];
+}> {
+  const session = await getStoredAuthSession();
+  if (!session) {
+    await ensurePeriodicSyncAlarm(false);
+    await writeSyncState({
+      ...DEFAULT_ZENBASE_SYNC_STATE,
+      status: 'idle',
+      userId: null,
+    });
+    return {
+      ok: false,
+      error: 'Aucun compte connecté.',
+      pulledDomains: [],
+      pushedDomains: [],
+    };
+  }
+
+  const settings = await readSyncSettings();
+  if (!settings.autoSync && !options.manual) {
+    await ensurePeriodicSyncAlarm(false);
+    await writeSyncState({
+      status: 'paused',
+      userId: session.user.id,
+      pendingDomains: Array.from(pendingDirtyDomains),
+    });
+    return {
+      ok: true,
+      error: null,
+      pulledDomains: [],
+      pushedDomains: [],
+    };
+  }
+
+  if (isSyncInFlight) {
+    syncQueued = true;
+    return {
+      ok: true,
+      error: null,
+      pulledDomains: [],
+      pushedDomains: [],
+    };
+  }
+
+  isSyncInFlight = true;
+  if (chrome.alarms) {
+    void chrome.alarms.clear(ZENBASE_SYNC_PUSH_ALARM);
+  }
+  if (settings.autoSync) {
+    await ensurePeriodicSyncAlarm(true);
+  }
+
+  const dirtySnapshot = new Set<SyncDomain>(pendingDirtyDomains);
+  pendingDirtyDomains.clear();
+
+  await writeSyncState({
+    status: 'syncing',
+    lastError: null,
+    userId: session.user.id,
+    pendingDomains: Array.from(dirtySnapshot),
+  });
+
+  try {
+    const outcome = await runBidirectionalSync({
+      session,
+      dirtyDomains: dirtySnapshot,
+      onBeforeApplyRemote: () => {
+        isApplyingRemoteWrite = true;
+        suppressRemoteEchoUntil = Date.now() + 900;
+      },
+      onAfterApplyRemote: () => {
+        isApplyingRemoteWrite = false;
+        suppressRemoteEchoUntil = Date.now() + 900;
+      },
+    });
+
+    if (outcome.unauthorized) {
+      await ensurePeriodicSyncAlarm(false);
+      await chrome.storage.local.set({ [AUTH_SESSION_KEY]: null });
+      await writeSyncState({
+        status: 'error',
+        lastError: outcome.error,
+        pendingDomains: [],
+        userId: null,
+      });
+      return outcome;
+    }
+
+    if (!outcome.ok) {
+      // Conserver les domaines non poussés dans la file d'attente
+      for (const d of dirtySnapshot) {
+        if (!outcome.pushedDomains.includes(d)) {
+          pendingDirtyDomains.add(d);
+        }
+      }
+      await writeSyncState({
+        status: outcome.offline ? 'offline' : 'error',
+        lastError: outcome.error,
+        pendingDomains: Array.from(pendingDirtyDomains),
+        userId: session.user.id,
+      });
+      return outcome;
+    }
+
+    await writeSyncState({
+      status: settings.autoSync ? 'synced' : 'paused',
+      lastSyncedAt: Date.now(),
+      lastError: null,
+      pendingDomains: Array.from(pendingDirtyDomains),
+      userId: session.user.id,
+    });
+    return outcome;
+  } catch (err) {
+    for (const d of dirtySnapshot) {
+      pendingDirtyDomains.add(d);
+    }
+    const message =
+      err instanceof Error ? err.message : 'Erreur de synchronisation.';
+    await writeSyncState({
+      status: 'error',
+      lastError: message,
+      pendingDomains: Array.from(pendingDirtyDomains),
+      userId: session.user.id,
+    });
+    return {
+      ok: false,
+      error: message,
+      pulledDomains: [],
+      pushedDomains: [],
+    };
+  } finally {
+    isSyncInFlight = false;
+    if (syncQueued) {
+      syncQueued = false;
+      scheduleDebouncedSyncPush();
+    }
+  }
+}
+
+// Suivi des changements locaux dans chrome.storage.local pour synchro bidirectionnelle automatique
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local') return;
+
+  // Changement de session (connexion / changement de compte / déconnexion)
+  if (AUTH_SESSION_KEY in changes) {
+    const nextSession = changes[AUTH_SESSION_KEY].newValue as
+      | StoredAuthSession
+      | null
+      | undefined;
+
+    if (!nextSession || !nextSession.token) {
+      // Déconnexion : on coupe la synchro et on conserve toutes les données locales intactes
+      if (pushDebounceTimer !== null) {
+        clearTimeout(pushDebounceTimer);
+        pushDebounceTimer = null;
+      }
+      pendingDirtyDomains.clear();
+      void ensurePeriodicSyncAlarm(false);
+      void writeSyncState({
+        ...DEFAULT_ZENBASE_SYNC_STATE,
+        status: 'idle',
+        userId: null,
+      });
+    } else {
+      // Connexion : efface toute file en attente héritée puis lance la synchro (fusion ou isolation stricte si autre compte)
+      pendingDirtyDomains.clear();
+      void readSyncSettings().then((settings) => {
+        if (settings.autoSync) {
+          void ensurePeriodicSyncAlarm(true);
+          void triggerZenbaseSync({ manual: false });
+        } else {
+          void writeSyncState({
+            status: 'paused',
+            userId: nextSession.user.id,
+          });
+        }
+      });
+    }
+    return;
+  }
+
+  // Activation / mise en pause manuelle de la synchro automatique
+  if (SYNC_SETTINGS_KEY in changes) {
+    const nextSettings = {
+      ...DEFAULT_ZENBASE_SYNC_SETTINGS,
+      ...((changes[SYNC_SETTINGS_KEY].newValue as Partial<ZenbaseSyncSettings>) ||
+        {}),
+    };
+    void getStoredAuthSession().then((session) => {
+      if (!session) return;
+      if (nextSettings.autoSync) {
+        void ensurePeriodicSyncAlarm(true);
+        void triggerZenbaseSync({ manual: false });
+      } else {
+        if (pushDebounceTimer !== null) {
+          clearTimeout(pushDebounceTimer);
+          pushDebounceTimer = null;
+        }
+        void ensurePeriodicSyncAlarm(false);
+        void writeSyncState({
+          status: 'paused',
+          userId: session.user.id,
+        });
+      }
+    });
+    return;
+  }
+
+  // Ignorer nos propres écritures issues d'un pull distant
+  if (isApplyingRemoteWrite || Date.now() < suppressRemoteEchoUntil) {
+    return;
+  }
+
+  const touchedKeys = SYNCED_STORAGE_KEYS.filter((k) => k in changes);
+  if (touchedKeys.length === 0) return;
+
+  void (async () => {
+    const [session, settings, stored] = await Promise.all([
+      getStoredAuthSession(),
+      readSyncSettings(),
+      chrome.storage.local.get([
+        SYNC_META_KEY,
+        'kanbans',
+        'kanbanTemplates',
+        'themeSettings',
+        'isTabBarPinned',
+      ]),
+    ]);
+
+    const meta = normalizeSyncMeta(
+      stored[SYNC_META_KEY],
+      session?.user.id ?? null
+    );
+    const trackDeletions = Boolean(session?.user.id || meta.userId);
+    const dirtyNow = new Set<SyncDomain>();
+
+    for (const key of touchedKeys) {
+      const change = changes[key];
+      const didChange = recordLocalStorageDiff(
+        meta,
+        key as SyncedStorageKey,
+        change.oldValue,
+        change.newValue,
+        trackDeletions
+      );
+      if (!didChange) continue;
+
+      const domain = storageKeyToDomain(key);
+      if (!domain) continue;
+
+      // Vérifie que la nouvelle valeur diffère réellement du dernier hash synchronisé
+      let payloadForHash: unknown = change.newValue;
+      if (domain === 'kanbans') {
+        payloadForHash = {
+          boards: Array.isArray(stored.kanbans)
+            ? stored.kanbans.filter(
+                (b: { id?: string; isSystemTodosBoard?: boolean }) =>
+                  b && b.id !== TODOS_KANBAN_BOARD_ID && !b.isSystemTodosBoard
+              )
+            : [],
+          templates: Array.isArray(stored.kanbanTemplates)
+            ? stored.kanbanTemplates
+            : [],
+        };
+      } else if (domain === 'preferences') {
+        payloadForHash = {
+          themeSettings: stored.themeSettings ?? DEFAULT_THEME_SETTINGS,
+          isTabBarPinned:
+            typeof stored.isTabBarPinned === 'boolean'
+              ? stored.isTabBarPinned
+              : true,
+        };
+      }
+
+      const newHash = computeDomainHash(domain, payloadForHash);
+      if (newHash !== meta.lastSyncedHashes[domain]) {
+        dirtyNow.add(domain);
+      }
+    }
+
+    await chrome.storage.local.set({ [SYNC_META_KEY]: meta });
+
+    if (dirtyNow.size === 0 || !session) return;
+
+    for (const d of dirtyNow) {
+      pendingDirtyDomains.add(d);
+    }
+
+    if (settings.autoSync) {
+      await writeSyncState({
+        pendingDomains: Array.from(pendingDirtyDomains),
+        userId: session.user.id,
+      });
+      scheduleDebouncedSyncPush();
+    } else {
+      await writeSyncState({
+        status: 'paused',
+        pendingDomains: Array.from(pendingDirtyDomains),
+        userId: session.user.id,
+      });
+    }
+  })();
+});
+
+// Messages inter-fenêtres (synchronisation manuelle ou à l'ouverture d'une fenêtre)
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (!message || typeof message !== 'object') return false;
+  if (message.type === 'ZENBASE_SYNC_NOW') {
+    void triggerZenbaseSync({ manual: Boolean(message.manual) }).then(
+      (result) => sendResponse(result)
+    );
+    return true;
+  }
+  return false;
+});
+
+// Démarrage de Chrome : relance l'alarme et une synchro initiale si un compte est connecté
+chrome.runtime.onStartup.addListener(() => {
+  void (async () => {
+    const session = await getStoredAuthSession();
+    const settings = await readSyncSettings();
+    if (session && settings.autoSync) {
+      await ensurePeriodicSyncAlarm(true);
+      void triggerZenbaseSync({ manual: false });
+    }
+  })();
+});
+
+// Bootstrap à l'activation du Service Worker
+void (async () => {
+  const session = await getStoredAuthSession();
+  const settings = await readSyncSettings();
+  if (session && settings.autoSync) {
+    await ensurePeriodicSyncAlarm(true);
+  }
+})();
