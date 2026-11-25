@@ -148,6 +148,20 @@ export interface NoteItem {
   updatedAt: number;
 }
 
+export type NoteSpellCheckLang = 'fr' | 'en';
+
+export interface NoteEditorSettings {
+  wordWrap: boolean;
+  spellCheck: boolean;
+  spellCheckLang: NoteSpellCheckLang;
+}
+
+export const DEFAULT_NOTE_EDITOR_SETTINGS: NoteEditorSettings = {
+  wordWrap: true,
+  spellCheck: true,
+  spellCheckLang: 'fr',
+};
+
 export type ThemeMode = 'system' | 'light' | 'dark';
 export type ChromeAccent = 'amber' | 'blue' | 'indigo' | 'emerald' | 'violet' | 'rose';
 

@@ -406,6 +406,29 @@ export const IconChevronDown: React.FC<IconProps> = (props) => (
   </BaseSvg>
 );
 
+export const IconChevronLeft: React.FC<IconProps> = (props) => (
+  <BaseSvg {...props}>
+    <path d="m15 18-6-6 6-6" />
+  </BaseSvg>
+);
+
+export const IconWrapText: React.FC<IconProps> = (props) => (
+  <BaseSvg {...props}>
+    <line x1="3" x2="21" y1="6" y2="6" />
+    <path d="M3 12h15a3 3 0 1 1 0 6h-4" />
+    <polyline points="16 16 14 18 16 20" />
+    <line x1="3" x2="10" y1="18" y2="18" />
+  </BaseSvg>
+);
+
+export const IconSpellCheck: React.FC<IconProps> = (props) => (
+  <BaseSvg {...props}>
+    <path d="m6 16 6-12 6 12" />
+    <path d="M8 12h8" />
+    <path d="m16 20 2 2 4-4" />
+  </BaseSvg>
+);
+
 export const IconLink: React.FC<IconProps> = (props) => (
   <BaseSvg {...props}>
     <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />

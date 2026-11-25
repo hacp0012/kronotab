@@ -8,7 +8,10 @@ import React, {
 } from 'react';
 import {
   IconBold,
+  IconCheck,
   IconCheckbox,
+  IconChevronLeft,
+  IconChevronRight,
   IconClearFormat,
   IconHighlighter,
   IconItalic,
@@ -17,16 +20,24 @@ import {
   IconMinus,
   IconMoreHorizontal,
   IconQuote,
+  IconSettings,
+  IconSpellCheck,
   IconStrikethrough,
   IconTextColor,
   IconTimer,
   IconTriStateCheckbox,
   IconUnderline,
+  IconWrapText,
 } from '../shared/Icons';
+import { NoteEditorSettings, NoteSpellCheckLang } from '../shared/types';
 import { useClickOutside } from '../shared/useClickOutside';
+import { SpellCheckEngineStatus } from './spellcheckClient';
 
 export interface NotesFormatToolbarProps {
   noteFontSize: number;
+  editorSettings: NoteEditorSettings;
+  spellCheckStatus: SpellCheckEngineStatus;
+  ignoredWordsCount: number;
   showTextColorMenu: boolean;
   showHighlightMenu: boolean;
   textColorButtonRef: React.MutableRefObject<HTMLButtonElement | null>;
@@ -39,6 +50,10 @@ export interface NotesFormatToolbarProps {
   onToggleTextColorMenu: () => void;
   onToggleHighlightMenu: () => void;
   onClearFormatting: () => void;
+  onToggleWordWrap: () => void;
+  onToggleSpellCheck: () => void;
+  onChangeSpellCheckLang: (lang: NoteSpellCheckLang) => void;
+  onResetIgnoredWords: () => void;
 }
 
 interface ToolbarItem {
@@ -59,6 +74,9 @@ const MIN_GAP_BETWEEN_SIDES = 10;
 
 export const NotesFormatToolbar: React.FC<NotesFormatToolbarProps> = ({
   noteFontSize,
+  editorSettings,
+  spellCheckStatus,
+  ignoredWordsCount,
   showTextColorMenu,
   showHighlightMenu,
   textColorButtonRef,
@@ -71,22 +89,45 @@ export const NotesFormatToolbar: React.FC<NotesFormatToolbarProps> = ({
   onToggleTextColorMenu,
   onToggleHighlightMenu,
   onClearFormatting,
+  onToggleWordWrap,
+  onToggleSpellCheck,
+  onChangeSpellCheckLang,
+  onResetIgnoredWords,
 }) => {
   const barRef = useRef<HTMLDivElement | null>(null);
   const rightGroupRef = useRef<HTMLDivElement | null>(null);
   const overflowBtnRef = useRef<HTMLButtonElement | null>(null);
   const overflowMenuRef = useRef<HTMLDivElement | null>(null);
+  const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
+  const settingsMenuRef = useRef<HTMLDivElement | null>(null);
 
   const [showOverflowMenu, setShowOverflowMenu] = useState<boolean>(false);
   const [overflowMenuLeft, setOverflowMenuLeft] = useState<number>(8);
+  const [showSettingsMenu, setShowSettingsMenu] = useState<boolean>(false);
+  const [settingsSubView, setSettingsSubView] = useState<'root' | 'spellcheck'>(
+    'root'
+  );
+
   const closeOverflowMenu = useCallback(() => setShowOverflowMenu(false), []);
+  const closeSettingsMenu = useCallback(() => {
+    setShowSettingsMenu(false);
+    setSettingsSubView('root');
+  }, []);
+
   useClickOutside(
     useMemo(() => [overflowBtnRef, overflowMenuRef], []),
     showOverflowMenu,
     closeOverflowMenu
   );
+  useClickOutside(
+    useMemo(() => [settingsBtnRef, settingsMenuRef], []),
+    showSettingsMenu,
+    closeSettingsMenu
+  );
 
   const toggleOverflowMenu = () => {
+    setShowSettingsMenu(false);
+    setSettingsSubView('root');
     setShowOverflowMenu((prev) => {
       const next = !prev;
       if (next && barRef.current && overflowBtnRef.current) {
@@ -104,17 +145,31 @@ export const NotesFormatToolbar: React.FC<NotesFormatToolbarProps> = ({
     });
   };
 
+  const toggleSettingsMenu = () => {
+    setShowOverflowMenu(false);
+    setShowSettingsMenu((prev) => {
+      if (prev) {
+        setSettingsSubView('root');
+        return false;
+      }
+      setSettingsSubView('root');
+      return true;
+    });
+  };
+
   // Fermeture avec Échap
   useEffect(() => {
-    if (!showOverflowMenu) return;
+    if (!showOverflowMenu && !showSettingsMenu) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setShowOverflowMenu(false);
+        setShowSettingsMenu(false);
+        setSettingsSubView('root');
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [showOverflowMenu]);
+  }, [showOverflowMenu, showSettingsMenu]);
 
   const leftItems: ToolbarItem[] = useMemo(
     () => [
@@ -396,7 +451,7 @@ export const NotesFormatToolbar: React.FC<NotesFormatToolbarProps> = ({
         </div>
       )}
 
-      {/* Partie droite : Taille police + Couleur texte + Surligneur + Effacer format */}
+      {/* Partie droite : Taille police + Couleur texte + Surligneur + Effacer + Paramètres d'édition */}
       <div ref={rightGroupRef} className="flex items-center gap-0.5 shrink-0">
         <button
           type="button"
@@ -415,6 +470,7 @@ export const NotesFormatToolbar: React.FC<NotesFormatToolbarProps> = ({
           onMouseDown={(e) => {
             e.preventDefault();
             setShowOverflowMenu(false);
+            closeSettingsMenu();
             onToggleTextColorMenu();
           }}
           className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${
@@ -433,6 +489,7 @@ export const NotesFormatToolbar: React.FC<NotesFormatToolbarProps> = ({
           onMouseDown={(e) => {
             e.preventDefault();
             setShowOverflowMenu(false);
+            closeSettingsMenu();
             onToggleHighlightMenu();
           }}
           className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${
@@ -456,7 +513,245 @@ export const NotesFormatToolbar: React.FC<NotesFormatToolbarProps> = ({
         >
           <IconClearFormat size={14} />
         </button>
+
+        <div className="h-4 w-px bg-md-outline mx-0.5 shrink-0" />
+
+        {/* Bouton compact à l'extrême droite : Paramètres d'édition (Word Wrap & Orthographe) */}
+        <button
+          ref={settingsBtnRef}
+          type="button"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            toggleSettingsMenu();
+          }}
+          className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${
+            showSettingsMenu
+              ? 'bg-md-primary text-md-on-primary'
+              : 'hover:bg-md-surface-high text-md-on-surface'
+          }`}
+          title="Paramètres d'édition (Retour à la ligne, Orthographe)"
+          aria-label="Paramètres d'édition des notes"
+          aria-expanded={showSettingsMenu}
+          aria-haspopup="menu"
+        >
+          <IconSettings size={14} />
+        </button>
       </div>
+
+      {/* Popover Paramètres d'édition (Retour à la ligne + Sous-menu Vérification orthographique) */}
+      {showSettingsMenu && (
+        <div
+          ref={settingsMenuRef}
+          className="krono-menu-enter absolute bottom-full right-2.5 mb-2 w-64 rounded-2xl bg-md-surface-container border border-md-outline shadow-2xl py-1.5 z-50 text-xs"
+        >
+          {settingsSubView === 'root' ? (
+            <>
+              <div className="px-3 py-1">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-md-on-surface-variant">
+                  Paramètres d'édition
+                </p>
+              </div>
+
+              {/* Action 1 : Retour à la ligne (Word Wrap) */}
+              <button
+                type="button"
+                role="switch"
+                aria-checked={editorSettings.wordWrap}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  onToggleWordWrap();
+                }}
+                className="w-full px-3 py-2 text-left hover:bg-md-surface-high flex items-center justify-between gap-2.5 transition-colors"
+              >
+                <span className="flex items-center gap-2.5 min-w-0">
+                  <IconWrapText size={14} className="text-md-primary shrink-0" />
+                  <span className="font-medium text-md-on-surface truncate">
+                    Retour à la ligne
+                  </span>
+                </span>
+                <span
+                  aria-hidden="true"
+                  className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${
+                    editorSettings.wordWrap
+                      ? 'bg-md-primary'
+                      : 'bg-md-surface border border-md-outline'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-3 w-3 rounded-full transition-transform ${
+                      editorSettings.wordWrap
+                        ? 'translate-x-3.5 bg-md-on-primary'
+                        : 'translate-x-0.5 bg-md-on-surface-variant'
+                    }`}
+                  />
+                </span>
+              </button>
+
+              <div className="h-px bg-md-outline my-1" />
+
+              {/* Action 2 : Vérification orthographique (ouvre le sous-menu secondaire) */}
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  setSettingsSubView('spellcheck');
+                }}
+                className="w-full px-3 py-2 text-left hover:bg-md-surface-high flex items-center justify-between gap-2 transition-colors"
+              >
+                <span className="flex items-center gap-2.5 min-w-0">
+                  <IconSpellCheck
+                    size={14}
+                    className="text-md-primary shrink-0"
+                  />
+                  <span className="font-medium text-md-on-surface truncate">
+                    Orthographe
+                  </span>
+                </span>
+                <span className="flex items-center gap-1 shrink-0 text-[10px] font-semibold text-md-on-surface-variant">
+                  <span className="px-1.5 py-0.5 rounded-full bg-md-surface">
+                    {editorSettings.spellCheck
+                      ? editorSettings.spellCheckLang === 'en'
+                        ? 'Anglais'
+                        : 'Français'
+                      : 'Désactivée'}
+                  </span>
+                  <IconChevronRight size={13} />
+                </span>
+              </button>
+            </>
+          ) : (
+            /* Sous-menu / Popover secondaire : Vérification orthographique */
+            <div className="krono-menu-enter">
+              <div className="px-2 pb-1.5 mb-1 border-b border-md-outline flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    setSettingsSubView('root');
+                  }}
+                  className="w-6 h-6 rounded-lg hover:bg-md-surface-high flex items-center justify-center text-md-on-surface-variant hover:text-md-on-surface transition-colors"
+                  title="Retour"
+                  aria-label="Retour aux paramètres d'édition"
+                >
+                  <IconChevronLeft size={14} />
+                </button>
+                <span className="text-[11px] font-bold text-md-on-surface truncate">
+                  Vérification orthographique
+                </span>
+              </div>
+
+              {/* Activation (Toggle) */}
+              <button
+                type="button"
+                role="switch"
+                aria-checked={editorSettings.spellCheck}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  onToggleSpellCheck();
+                }}
+                className="w-full px-3 py-2 text-left hover:bg-md-surface-high flex items-center justify-between gap-2.5 transition-colors"
+              >
+                <span className="font-medium text-md-on-surface">
+                  Activer la vérification
+                </span>
+                <span
+                  aria-hidden="true"
+                  className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${
+                    editorSettings.spellCheck
+                      ? 'bg-md-primary'
+                      : 'bg-md-surface border border-md-outline'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-3 w-3 rounded-full transition-transform ${
+                      editorSettings.spellCheck
+                        ? 'translate-x-3.5 bg-md-on-primary'
+                        : 'translate-x-0.5 bg-md-on-surface-variant'
+                    }`}
+                  />
+                </span>
+              </button>
+
+              <div className="h-px bg-md-outline my-1" />
+
+              {/* Sélection de la langue (Français / Anglais) */}
+              <div
+                className={`px-3 py-1.5 space-y-1.5 transition-opacity ${
+                  editorSettings.spellCheck ? 'opacity-100' : 'opacity-50'
+                }`}
+              >
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-md-on-surface-variant">
+                  Langue de correction
+                </p>
+                <div className="space-y-1" role="radiogroup" aria-label="Langue de correction">
+                  {(
+                    [
+                      { id: 'fr', label: 'Français', code: 'FR' },
+                      { id: 'en', label: 'Anglais', code: 'EN' },
+                    ] as const
+                  ).map((langOpt) => {
+                    const selected =
+                      editorSettings.spellCheckLang === langOpt.id;
+                    return (
+                      <button
+                        key={langOpt.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          onChangeSpellCheckLang(langOpt.id);
+                        }}
+                        className={`w-full px-2.5 py-1.5 rounded-xl text-left flex items-center justify-between gap-2 transition-colors ${
+                          selected
+                            ? 'bg-md-primary-container text-md-on-primary-container font-semibold'
+                            : 'bg-md-surface hover:bg-md-surface-high text-md-on-surface'
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span className="text-[10px] font-mono font-bold opacity-75">
+                            {langOpt.code}
+                          </span>
+                          <span>{langOpt.label}</span>
+                        </span>
+                        {selected && <IconCheck size={12} />}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {editorSettings.spellCheck && (
+                  <p className="pt-0.5 text-[10px] text-md-on-surface-variant flex items-center justify-between">
+                    <span>
+                      {spellCheckStatus === 'loading'
+                        ? 'Chargement du dictionnaire…'
+                        : spellCheckStatus === 'error'
+                        ? 'Erreur de chargement'
+                        : 'Clic sur un mot souligné pour corriger'}
+                    </span>
+                  </p>
+                )}
+              </div>
+
+              {ignoredWordsCount > 0 && (
+                <>
+                  <div className="h-px bg-md-outline my-1" />
+                  <button
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      onResetIgnoredWords();
+                    }}
+                    className="w-full px-3 py-1.5 text-left text-[11px] font-medium text-md-on-surface-variant hover:text-rose-500 hover:bg-md-surface-high transition-colors"
+                  >
+                    Réinitialiser les mots ignorés ({ignoredWordsCount})
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

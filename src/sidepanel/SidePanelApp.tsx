@@ -47,11 +47,14 @@ import { getTaskStatus, normalizeTodoLists } from '../shared/todoUtils';
 import {
   DEFAULT_KANBANS,
   DEFAULT_NOTES,
+  DEFAULT_NOTE_EDITOR_SETTINGS,
   DEFAULT_TIMERS,
   DEFAULT_TIMER_SOUND_ID,
   DEFAULT_TODO_LISTS,
   KanbanBoard,
+  NoteEditorSettings,
   NoteItem,
+  NoteSpellCheckLang,
   Priority,
   TIMER_SOUNDS,
   TODOS_KANBAN_BOARD_ID,
@@ -81,6 +84,10 @@ import {
   insertInlineTimerDraftAtSelection,
 } from './RichNoteEditor';
 import { NotesFormatToolbar } from './NotesFormatToolbar';
+import {
+  spellcheckClient,
+  SpellCheckEngineStatus,
+} from './spellcheckClient';
 
 type SidePanelTab = 'timers' | 'todos' | 'notes';
 const SIDE_PANEL_TABS: SidePanelTab[] = ['timers', 'todos', 'notes'];
@@ -296,6 +303,46 @@ export const SidePanelApp: React.FC = () => {
     'noteFontSize',
     13
   );
+  const [noteEditorSettings, setNoteEditorSettings] =
+    useChromeStorage<NoteEditorSettings>(
+      'noteEditorSettings',
+      DEFAULT_NOTE_EDITOR_SETTINGS
+    );
+  const [noteSpellIgnoredWords, setNoteSpellIgnoredWords] =
+    useChromeStorage<string[]>('noteSpellCheckIgnoredWords', []);
+  const [spellCheckStatus, setSpellCheckStatus] =
+    useState<SpellCheckEngineStatus>(() =>
+      spellcheckClient.getStatus(DEFAULT_NOTE_EDITOR_SETTINGS.spellCheckLang)
+    );
+
+  // Synchronise le statut du moteur orthographique intégré et précharge le dictionnaire actif sur l'onglet Notes
+  useEffect(() => {
+    const lang = noteEditorSettings.spellCheckLang;
+    setSpellCheckStatus(spellcheckClient.getStatus(lang));
+    const unsubscribe = spellcheckClient.subscribe(() => {
+      setSpellCheckStatus(spellcheckClient.getStatus(lang));
+    });
+    if (activeTab === 'notes' && noteEditorSettings.spellCheck) {
+      void spellcheckClient.preload(lang);
+    }
+    return unsubscribe;
+  }, [activeTab, noteEditorSettings.spellCheck, noteEditorSettings.spellCheckLang]);
+
+  const handleIgnoreSpellWord = useCallback(
+    (word: string) => {
+      const normalized = word.trim().toLowerCase();
+      if (!normalized) return;
+      setNoteSpellIgnoredWords((prev) =>
+        prev.includes(normalized) ? prev : [...prev, normalized]
+      );
+    },
+    [setNoteSpellIgnoredWords]
+  );
+
+  const handleResetIgnoredSpellWords = useCallback(() => {
+    setNoteSpellIgnoredWords([]);
+    showToast('Mots ignorés réinitialisés.');
+  }, [setNoteSpellIgnoredWords]);
 
   // Migration transparente des anciennes sous-tâches à plat en vraies sous-tâches imbriquées (`children`)
   useEffect(() => {
@@ -3372,6 +3419,8 @@ export const SidePanelApp: React.FC = () => {
             <input
               type="text"
               value={currentNote.title}
+              spellCheck={noteEditorSettings.spellCheck}
+              lang={noteEditorSettings.spellCheckLang === 'en' ? 'en-US' : 'fr-FR'}
               onChange={(e) =>
                 handleUpdateCurrentNote({ title: e.target.value })
               }
@@ -3384,10 +3433,15 @@ export const SidePanelApp: React.FC = () => {
               noteId={currentNote.id}
               initialHtml={currentNote.content}
               fontSize={noteFontSize}
+              wordWrap={noteEditorSettings.wordWrap}
+              spellCheck={noteEditorSettings.spellCheck}
+              spellCheckLang={noteEditorSettings.spellCheckLang}
+              ignoredWords={noteSpellIgnoredWords}
               editorRef={editorRef}
               onChangeHtml={(html) => handleUpdateCurrentNote({ content: html })}
               onChangeFontSize={setNoteFontSize}
               onTriggerTimerTag={handleStartTimerFromNote}
+              onIgnoreSpellWord={handleIgnoreSpellWord}
             />
           </main>
 
@@ -3454,9 +3508,12 @@ export const SidePanelApp: React.FC = () => {
               </div>
             )}
 
-            {/* Ligne 1 : Barre de formatage responsive avec menu de débordement automatique */}
+            {/* Ligne 1 : Barre de formatage responsive avec menu de débordement + paramètres d'édition */}
             <NotesFormatToolbar
               noteFontSize={noteFontSize}
+              editorSettings={noteEditorSettings}
+              spellCheckStatus={spellCheckStatus}
+              ignoredWordsCount={noteSpellIgnoredWords.length}
               showTextColorMenu={showTextColorMenu}
               showHighlightMenu={showHighlightMenu}
               textColorButtonRef={textColorButtonRef}
@@ -3499,6 +3556,25 @@ export const SidePanelApp: React.FC = () => {
                 setShowTextColorMenu(false);
               }}
               onClearFormatting={handleClearFormatting}
+              onToggleWordWrap={() =>
+                setNoteEditorSettings((prev) => ({
+                  ...prev,
+                  wordWrap: !prev.wordWrap,
+                }))
+              }
+              onToggleSpellCheck={() =>
+                setNoteEditorSettings((prev) => ({
+                  ...prev,
+                  spellCheck: !prev.spellCheck,
+                }))
+              }
+              onChangeSpellCheckLang={(lang: NoteSpellCheckLang) =>
+                setNoteEditorSettings((prev) => ({
+                  ...prev,
+                  spellCheckLang: lang,
+                }))
+              }
+              onResetIgnoredWords={handleResetIgnoredSpellWords}
             />
 
             {/* Ligne 2 : Barre d'actions inférieure */}

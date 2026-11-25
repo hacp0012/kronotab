@@ -25,6 +25,9 @@ Située au-dessus de la barre d'actions inférieure, elle est divisée en deux z
 - **Structures & insertions** : Liste à puces, Liste numérotée, **Case à cocher classique**, **Case à cocher 3 états (Todo)**, **Timer *inline*** (`[timer:00`), Citation, Ligne séparatrice.
 - **Couleurs et nettoyage** : **Couleur du texte**, **Surligneur (marqueur)** et **Annuler la mise en forme** (Clear formatting).
 - **Indicateur de taille de police** (`13px` par défaut) : cliquez dessus pour réinitialiser rapidement la taille par défaut.
+- **Paramètres d'édition (`⚙`, à l'extrême droite)** : ouvre un menu regroupant :
+  - **Retour à la ligne (*Word Wrap*)** : interrupteur pour activer ou désactiver le retour à la ligne automatique (avec défilement horizontal lorsqu'il est désactivé).
+  - **Vérification orthographique (*Orthographe*)** : correcteur intégré **100 % hors-ligne** (indépendant des réglages Chrome) avec interrupteur d'activation et sélecteur de langue (**Français** ou **Anglais**). Les fautes sont soulignées en rouge ondulé ; un **clic** ou un **clic droit** sur un mot souligné ouvre un menu de suggestions de correction ainsi qu'une option pour **ignorer** le mot (réinitialisable depuis le sous-menu *Orthographe*).
 
 ---
 

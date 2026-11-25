@@ -203,6 +203,31 @@ body {
   white-space: pre-wrap;
   tab-size: 4;
   word-break: break-word;
+  overflow-x: hidden;
+}
+
+.krono-rich-editor[data-word-wrap="false"] {
+  white-space: pre;
+  word-break: normal;
+  overflow-x: auto;
+}
+
+.krono-rich-editor[data-word-wrap="false"] p,
+.krono-rich-editor[data-word-wrap="false"] div,
+.krono-rich-editor[data-word-wrap="false"] li,
+.krono-rich-editor[data-word-wrap="false"] h1,
+.krono-rich-editor[data-word-wrap="false"] h2,
+.krono-rich-editor[data-word-wrap="false"] blockquote,
+.krono-rich-editor[data-word-wrap="false"] .krono-note-task-text {
+  white-space: pre;
+  word-break: normal;
+}
+
+/* Correcteur orthographique intégré (FR / EN) via CSS Custom Highlight API */
+::highlight(krono-spell-error) {
+  text-decoration: underline wavy #ef4444;
+  text-decoration-thickness: max(1px, 0.08em);
+  text-underline-offset: 0.2em;
 }
 
 .krono-rich-editor:empty:before {
