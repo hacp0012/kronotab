@@ -131,8 +131,11 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 // Helper pour créer ou réutiliser le document Offscreen Audio
-async function ensureOffscreenDocument(): Promise<void> {
-  if (!chrome.offscreen) return;
+let creatingOffscreenPromise: Promise<void> | null = null;
+const finalizingTimerIds = new Set<string>();
+
+async function hasOffscreenDocument(): Promise<boolean> {
+  if (!chrome.offscreen) return false;
   const offscreenUrl = chrome.runtime.getURL('offscreen.html');
 
   if ('getContexts' in chrome.runtime) {
@@ -140,19 +143,43 @@ async function ensureOffscreenDocument(): Promise<void> {
       contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
       documentUrls: [offscreenUrl],
     });
-    if (contexts.length > 0) return;
+    return contexts.length > 0;
   }
 
-  try {
-    await chrome.offscreen.createDocument({
+  const offscreenAny = chrome.offscreen as unknown as {
+    hasDocument?: () => Promise<boolean>;
+  };
+  if (typeof offscreenAny.hasDocument === 'function') {
+    return offscreenAny.hasDocument();
+  }
+
+  return false;
+}
+
+async function ensureOffscreenDocument(): Promise<void> {
+  if (!chrome.offscreen) return;
+  if (await hasOffscreenDocument()) return;
+
+  if (creatingOffscreenPromise) {
+    await creatingOffscreenPromise;
+    return;
+  }
+
+  creatingOffscreenPromise = chrome.offscreen
+    .createDocument({
       url: 'offscreen.html',
       reasons: [chrome.offscreen.Reason.AUDIO_PLAYBACK],
       justification:
         'Lecture de la sonnerie du minuteur KronoTab même lorsque le panneau latéral est fermé.',
+    })
+    .catch(() => {
+      // Le document offscreen existe déjà
+    })
+    .finally(() => {
+      creatingOffscreenPromise = null;
     });
-  } catch {
-    // Le document offscreen existe déjà
-  }
+
+  await creatingOffscreenPromise;
 }
 
 async function triggerOffscreenAlarmSound(
@@ -174,6 +201,7 @@ async function triggerOffscreenAlarmSound(
 
 async function stopOffscreenAlarmSound(): Promise<void> {
   try {
+    if (!(await hasOffscreenDocument())) return;
     await chrome.runtime.sendMessage({
       target: 'offscreen',
       type: 'STOP_ALARM_SOUND',
@@ -192,9 +220,10 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 
   updateActionBadge(newTimers);
 
+  const wasRinging = oldTimers.some((t) => t.ringing);
   const anyRinging = newTimers.some((t) => t.ringing);
-  if (!anyRinging) {
-    stopOffscreenAlarmSound();
+  if (wasRinging && !anyRinging) {
+    void stopOffscreenAlarmSound();
   }
 
   oldTimers.forEach((oldTimer) => {
@@ -315,6 +344,9 @@ chrome.notifications.onClosed.addListener((notificationId) => {
 });
 
 function finalizeExpiredTimer(timerId: string): void {
+  if (finalizingTimerIds.has(timerId)) return;
+  finalizingTimerIds.add(timerId);
+
   chrome.storage.local.get(['timers'], (result) => {
     const timers: TimerItem[] = result.timers || [];
     let finishedTimer: TimerItem | null = null;
@@ -336,9 +368,10 @@ function finalizeExpiredTimer(timerId: string): void {
     if (finishedTimer !== null) {
       const targetTimer = finishedTimer as TimerItem;
       chrome.storage.local.set({ timers: updatedTimers }, () => {
+        finalizingTimerIds.delete(timerId);
         updateActionBadge(updatedTimers);
 
-        triggerOffscreenAlarmSound(
+        void triggerOffscreenAlarmSound(
           targetTimer.soundId || 'digital',
           Boolean(targetTimer.repeatAlarm)
         );
@@ -353,6 +386,8 @@ function finalizeExpiredTimer(timerId: string): void {
           buttons: [{ title: "OK, d'accord" }, { title: '+1 Min' }],
         });
       });
+    } else {
+      finalizingTimerIds.delete(timerId);
     }
   });
 }
